@@ -1,33 +1,11 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
 import { processProofFiles, MAX_IMAGES_PER_TXN } from '../lib/fileUtils';
+import { PAYMENT_MODES, getNextTxnId } from '../lib/txnUtils';
 import { Upload, CheckCircle2, X, AlertTriangle, Users } from 'lucide-react';
-
-const PAYMENT_MODES = ['Cash', 'UPI', 'Card', 'NetBanking'];
-
-const getNextTxnId = async () => {
-  try {
-    // Only fetch the single transaction with the highest sequence — fast, no full scan
-    const q = query(collection(db, 'transactions'), orderBy('txnSequence', 'desc'), limit(1));
-    const snap = await getDocs(q);
-    const topSeq = snap.empty ? 0 : (snap.docs[0].data().txnSequence || 0);
-    const next = topSeq + 1;
-    return { sequence: next, id: `TX_${String(next).padStart(4, '0')}` };
-  } catch (e) {
-    // Fallback if the index isn't ready yet
-    try {
-      const snap = await getDocs(collection(db, 'transactions'));
-      const sequences = snap.docs.map(d => d.data().txnSequence || 0);
-      const next = (sequences.length ? Math.max(...sequences) : 0) + 1;
-      return { sequence: next, id: `TX_${String(next).padStart(4, '0')}` };
-    } catch (e2) {
-      return { sequence: Date.now(), id: `TX_${String(Date.now()).slice(-4)}` };
-    }
-  }
-};
 
 const UpdateDetails = ({ onSaved }) => {
   const { user, profile } = useAuth();

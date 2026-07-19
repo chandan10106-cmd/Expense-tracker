@@ -112,6 +112,8 @@ h3 { font-size: 1.25rem; }
 .btn-delete { background: var(--error-bg); color: var(--error); border-color: rgba(168,52,30,0.2); }
 .btn-delete:hover { background: rgba(168,52,30,0.18); }
 .btn-action.btn-icon-only { padding: 5px 8px; min-width: 28px; justify-content: center; }
+.btn-action.btn-items { background: var(--cream-2); color: var(--muted); border-color: var(--cream-3); }
+.btn-action.btn-items:hover { background: var(--cream-3); color: var(--ink); }
 .btn-approve { background: var(--green); color: white; }
 .btn-approve:hover { background: #3d5a2e; }
 .btn-reject { background: var(--error-bg); color: var(--error); border-color: rgba(168,52,30,0.2); }
@@ -128,6 +130,14 @@ h3 { font-size: 1.25rem; }
 .txn-card-amount { font-family: 'Fraunces', serif; font-weight: 700; font-size: 18px; }
 .txn-card-paidto { font-size: 14px; margin-top: 6px; line-height: 1.4; word-break: break-word; }
 .txn-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.expand-toggle { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 3px; }
+.expand-toggle:hover { background: var(--cream-3); color: var(--ink); }
+.txn-row-child { background: var(--cream-2); }
+.txn-row-child:hover { background: var(--cream-3) !important; }
+.timeline-children { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--cream-3); }
+.timeline-child-card { background: var(--cream-2); border: 1px solid var(--cream-3); border-radius: var(--radius); padding: 10px 12px; margin-left: 12px; }
+.txn-card-children { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--cream-3); }
+.txn-card-child { background: var(--cream-2); border: 1px solid var(--cream-3); border-radius: var(--radius); padding: 10px 12px; margin-left: 10px; }
 .txn-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--cream-3); flex-wrap: wrap; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(26,24,21,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; backdrop-filter: blur(4px); }
 .modal { background: var(--cream); border-radius: var(--radius-lg); width: 100%; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg); overflow: hidden; }
