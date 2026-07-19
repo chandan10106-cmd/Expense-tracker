@@ -168,7 +168,10 @@ const InfoModal = ({ txn, childrenList, onClose, onViewProofs }) => {
           <DetailRow label="Bucket" value={txn.bucketName} />
           <DetailRow label="Date" value={formatDate(txn.date)} />
           <DetailRow label="Amount" value={`₹${formatINR(txn.amount)}`} />
-          {parentFlag && <DetailRow label="Combined total" value={`₹${formatINR(txn.combinedTotal)} (this + ${txn.childCount} related expense${txn.childCount > 1 ? 's' : ''})`} />}
+          {parentFlag && <DetailRow label="Combined total" value={
+            <span className="combined-total-badge" style={{ fontSize: 13, padding: '3px 10px' }}>₹{formatINR(txn.combinedTotal)}</span>
+          } />}
+          {parentFlag && <DetailRow label="Related expenses" value={`${txn.childCount} linked`} />}
           {isSplitTxn ? (
             <DetailRow label="Paid By" value={
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -531,7 +534,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontFamily: 'Fraunces, serif', fontWeight: 700, fontSize: 16 }}>₹{formatINR(t.amount)}</div>
-                        {parentFlag && <div style={{ fontSize: 11, color: 'var(--muted)' }}>₹{formatINR(t.combinedTotal)} total</div>}
+                        {parentFlag && <div className="combined-total-badge">₹{formatINR(t.combinedTotal)} total</div>}
                       </div>
                     </div>
                     <div style={{ fontSize: 14, margin: '6px 0', wordBreak: 'break-word' }}><DescriptionCell text={getDescription(t)} /></div>
@@ -608,7 +611,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
         </div>
         <div style={{ textAlign: 'right' }}>
           <div className="txn-card-amount">₹{formatINR(t.amount)}</div>
-          {parentFlag && <div style={{ fontSize: 11, color: 'var(--muted)' }}>₹{formatINR(t.combinedTotal)} total</div>}
+          {parentFlag && <div className="combined-total-badge">₹{formatINR(t.combinedTotal)} total</div>}
         </div>
       </div>
       <div className="txn-card-paidto"><DescriptionCell text={getDescription(t)} /></div>
@@ -692,7 +695,7 @@ const TxnRow = ({ t, isChildRow, expanded, onToggleExpand, onView, onEdit, onDel
       </td>
       <td className="amount-cell" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
         ₹{formatINR(t.amount)}
-        {parentFlag && <div style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400 }}>₹{formatINR(t.combinedTotal)} total</div>}
+        {parentFlag && <div className="combined-total-badge">₹{formatINR(t.combinedTotal)} total</div>}
       </td>
       <td>{proofs.length > 0 ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> View {proofs.length > 1 ? `(${proofs.length})` : ''}</button> : <span className="no-proof">none</span>}</td>
       <td>
