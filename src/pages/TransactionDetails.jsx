@@ -10,6 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Filter, RotateCcw, Info, Plus,
   Link, Star, StarOff, List, Clock, FileSpreadsheet, FileText
 } from 'lucide-react';
+import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
 import * as XLSX from 'xlsx';
 
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
@@ -241,7 +242,7 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
   const existingProofs = getProofsArray(txn);
   const isSplitTxn = txn.isSplit && Array.isArray(txn.splitDetails);
   const [date, setDate] = useState(txn.date || '');
-  const [amount, setAmount] = useState(String(txn.amount || ''));
+  const [amount, setAmount] = useState(formatWithCommas(String(txn.amount || '')));
   const [description, setDescription] = useState(getDescription(txn));
   const [mode, setMode] = useState(txn.mode || '');
   const [paidByUid, setPaidByUid] = useState(txn.paidByUid || '');
@@ -265,7 +266,7 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
       const finalProofs = [...keptProofs, ...newProcessed];
       const parsedDate = new Date(date);
       const updates = {
-        date, amount: parseInt(amount),
+        date, amount: parseToNumber(amount),
         paidTo: description.trim(), description: description.trim(),
         proofs: finalProofs, proofData: null, proofType: null, proofName: null, proofUrl: null,
         year: parsedDate.getFullYear(), month: parsedDate.getMonth() + 1,
@@ -309,7 +310,7 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
             )}
             <div className="form-grid">
               <div className="field"><label className="label">Date *</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
-              <div className="field"><label className="label">Amount (INR) *</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))} required /></div>
+              <div className="field"><label className="label">Amount (INR) *</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => setAmount(formatWithCommas(e.target.value))} required /></div>
             </div>
             <div className="field">
               <label className="label">Description * ({description.length}/300)</label>
@@ -392,7 +393,7 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
 
   useEffect(() => {
     if (isSplit && lastEditedField === 'total' && amount && selectedUsers.length > 0) {
-      const total = parseInt(amount);
+      const total = parseToNumber(amount);
       const perPerson = Math.floor(total / selectedUsers.length);
       const remainder = total - (perPerson * selectedUsers.length);
       const newAmounts = { ...splitAmounts };
@@ -404,11 +405,11 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
   useEffect(() => {
     if (isSplit && lastEditedField === 'split') {
       const sum = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
-      setAmount(sum > 0 ? String(sum) : '');
+      setAmount(sum > 0 ? formatWithCommas(String(sum)) : '');
     }
   }, [splitAmounts, selectedUsers, isSplit, lastEditedField]);
 
-  const handleAmountChange = (value) => { setAmount(value.replace(/\D/g, '')); setLastEditedField('total'); };
+  const handleAmountChange = (value) => { setAmount(formatWithCommas(value)); setLastEditedField('total'); };
 
   const toggleSplit = (checked) => {
     setIsSplit(checked);
@@ -486,7 +487,7 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
       if (files.length > 0) proofs = await processProofFiles(files);
       const { sequence, id: txnId } = await getNextTxnId();
       const parsedDate = new Date(date);
-      const finalAmount = isSplit ? splitTotal : parseInt(amount);
+      const finalAmount = isSplit ? splitTotal : parseToNumber(amount);
       const baseData = {
         txnId, txnSequence: sequence,
         bucketId: activeBucket.id, bucketName: activeBucket.name,

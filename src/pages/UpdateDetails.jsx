@@ -4,6 +4,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
 import { processProofFiles, MAX_IMAGES_PER_TXN } from '../lib/fileUtils';
+import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
 import { PAYMENT_MODES, getNextTxnId } from '../lib/txnUtils';
 import { Upload, CheckCircle2, X, AlertTriangle, Users } from 'lucide-react';
 
@@ -58,7 +59,7 @@ const UpdateDetails = ({ onSaved }) => {
 
   useEffect(() => {
     if (isSplit && lastEditedField === 'total' && amount && selectedUsers.length > 0) {
-      const total = parseInt(amount);
+      const total = parseToNumber(amount);
       const perPerson = Math.floor(total / selectedUsers.length);
       const remainder = total - (perPerson * selectedUsers.length);
       const newAmounts = { ...splitAmounts };
@@ -71,14 +72,14 @@ const UpdateDetails = ({ onSaved }) => {
   useEffect(() => {
     if (isSplit && lastEditedField === 'split') {
       const sum = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
-      setAmount(sum > 0 ? String(sum) : '');
+      setAmount(sum > 0 ? formatWithCommas(String(sum)) : '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [splitAmounts, selectedUsers, isSplit, lastEditedField]);
 
   const selectedUser = approvedUsers.find(u => u.id === paidByUid) || { id: user?.uid, name: profile?.name || user?.displayName || user?.email || '—', email: user?.email };
 
-  const handleAmountChange = (e) => { setAmount(e.target.value.replace(/\D/g, '')); setLastEditedField('total'); };
+  const handleAmountChange = (e) => { setAmount(formatWithCommas(e.target.value)); setLastEditedField('total'); };
 
   const handlePaidByChange = (e) => {
     const newUid = e.target.value;
@@ -139,7 +140,7 @@ const UpdateDetails = ({ onSaved }) => {
 
   const checkForDuplicate = async () => {
     try {
-      const finalAmount = isSplit ? splitTotal : parseInt(amount);
+      const finalAmount = isSplit ? splitTotal : parseToNumber(amount);
       // Narrow the read to same bucket + same date only, then match in memory.
       // Far fewer docs than scanning the whole collection.
       let snap;
