@@ -138,12 +138,13 @@ h3 { font-size: 1.25rem; }
 .txn-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .expand-toggle { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; border: none; background: transparent; color: var(--muted); cursor: pointer; border-radius: 3px; }
 .expand-toggle:hover { background: var(--cream-3); color: var(--ink); }
-.txn-row-child { background: var(--cream-2); }
-.txn-row-child:hover { background: var(--cream-3) !important; }
+.txn-row-child { background: var(--green-bg); border-left: 4px solid var(--green); }
+.txn-row-child:hover { background: #cfe5c1 !important; }
+.txn-row-child td { color: var(--ink); }
 .timeline-children { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--cream-3); }
-.timeline-child-card { background: var(--cream-2); border: 1px solid var(--cream-3); border-radius: var(--radius); padding: 10px 12px; margin-left: 12px; }
+.timeline-child-card { background: var(--green-bg); border: 1px solid rgba(74,107,58,0.15); border-radius: var(--radius); padding: 10px 12px; margin-left: 12px; }
 .txn-card-children { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--cream-3); }
-.txn-card-child { background: var(--cream-2); border: 1px solid var(--cream-3); border-radius: var(--radius); padding: 10px 12px; margin-left: 10px; }
+.txn-card-child { background: var(--green-bg); border: 1px solid rgba(74,107,58,0.15); border-radius: var(--radius); padding: 10px 12px; margin-left: 10px; }
 .txn-card-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--cream-3); flex-wrap: wrap; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(26,24,21,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 16px; backdrop-filter: blur(4px); }
 .modal { background: var(--cream); border-radius: var(--radius-lg); width: 100%; max-width: 92vw; max-height: 92vh; display: flex; flex-direction: column; box-shadow: var(--shadow-lg); overflow: hidden; }

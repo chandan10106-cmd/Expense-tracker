@@ -25,7 +25,23 @@ const getProofsArray = (t) => {
 
 // A "parent" is any transaction that has one or more child transactions linked to it.
 const isParentTxn = (t) => (t.childCount || 0) > 0;
-const getChildrenOf = (list, parentId) => list.filter(t => t.isChild && t.parentId === parentId).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+const getChildrenOf = (list, parentId) => {
+  if (!parentId) return [];
+  // Resolve both possible identifiers for the parent: its document id and txnId
+  const parent = list.find(x => x.id === parentId);
+  const parentDocId = parent ? parent.id : parentId;
+  const parentTxnId = parent ? parent.txnId : (typeof parentId === 'string' && parentId.startsWith('TX_') ? parentId : null);
+  return list.filter(t => {
+    if (!t.isChild) return false;
+    // Match any combination: child's parentId or parentTxnId may contain either the parent's doc id or txnId (legacy data)
+    return (
+      t.parentId === parentDocId ||
+      (parentTxnId && t.parentTxnId === parentTxnId) ||
+      (parentTxnId && t.parentId === parentTxnId) ||
+      (t.parentTxnId === parentDocId)
+    );
+  }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+};
 
 const formatPaidBy = (t) => {
   if (t.isSplit && Array.isArray(t.splitDetails) && t.splitDetails.length > 0) return t.splitDetails.map(s => s.name).join(', ');
@@ -41,6 +57,7 @@ const formatMode = (t) => {
 };
 
 const getDescription = (t) => t.description || t.paidTo || '';
+
 
 const READ_MORE_THRESHOLD = 60;
 const DescriptionCell = ({ text }) => {
@@ -727,6 +744,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
               const children = getChildrenOf(allTxns, t.id);
               const parentFlag = children.length > 0 || (t.childCount || 0) > 0;
               const expanded = expandedIds.has(t.id);
+              // no-op
               return (
                 <div key={t.id} className="timeline-item">
                   <div className="timeline-dot" />
@@ -1263,9 +1281,13 @@ const TransactionDetails = ({ onAddEntry }) => {
                 {filtered.map(t => (
                   <Fragment key={t.id}>
                     <TxnRow t={t} isChildRow={false} hasChildren={getChildrenOf(txns, t.id).length > 0 || (t.childCount || 0) > 0} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
-                    {expandedIds.has(t.id) && getChildrenOf(txns, t.id).map(c => (
-                      <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
-                    ))}
+                    {(() => {
+                      const children = getChildrenOf(txns, t.id);
+                      // no-op
+                      return (expandedIds.has(t.id) && children.map(c => (
+                        <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+                      )));
+                    })()}
                   </Fragment>
                 ))}
               </tbody>
@@ -1283,6 +1305,8 @@ const TransactionDetails = ({ onAddEntry }) => {
       {addChildFor && <AddChildModal parent={addChildFor} approvedUsers={approvedUsers} user={user} profile={profile} activeBucket={activeBucket} onClose={() => setAddChildFor(null)} onCreated={handleChildAdded} />}
       {linkToFavoriteFor && <LinkToFavoriteModal txn={linkToFavoriteFor} favoriteTxns={favoriteParents} onClose={() => setLinkToFavoriteFor(null)} onSelect={parent => linkTxnToFavorite(linkToFavoriteFor, parent)} />}
       {showExport && <ExportModal onClose={() => setShowExport(false)} filtered={filtered} allTxns={topLevel} bucketName={activeBucket.name} />}
+
+      {/* debug overlay removed */}
     </div>
   );
 };
