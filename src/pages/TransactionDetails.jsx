@@ -8,7 +8,7 @@ import { PAYMENT_MODES, getNextTxnId } from '../lib/txnUtils';
 import {
   Eye, Download, X, Search, Trash2, Pencil, Upload, CheckCircle2,
   ChevronLeft, ChevronRight, ChevronDown, Filter, RotateCcw, Info, Plus,
-  Star, StarOff, List, Clock, FileSpreadsheet, FileText
+  Link, Star, StarOff, List, Clock, FileSpreadsheet, FileText
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -751,11 +751,11 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                         ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> View {proofs.length > 1 ? `(${proofs.length})` : ''}</button>
                         : <span className="no-proof" style={{ fontSize: 11 }}>no proof</span>}
                       <button className="info-btn" onClick={() => onInfo(t)} title="Details"><Info size={13} /></button>
-                      <button className="btn-action btn-icon-only" onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
-                        {t.isFavorite ? <Star size={13} /> : <StarOff size={13} />}
+                      <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+                        {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
                       </button>
                       {!t.isChild && !t.isFavorite && favoriteParents.length > 0 && (
-                        <button className="btn-action btn-items" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Plus size={11} /> Link</button>
+                        <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
                       )}
                       <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
                       <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
@@ -835,11 +835,11 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
         {proofs.length > 0 ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> {proofs.length > 1 ? `View (${proofs.length})` : 'View'}</button> : <span className="no-proof">no proof</span>}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
           <button className="info-btn" onClick={() => onInfo(t)} title="Details"><Info size={13} /></button>
-          <button className="btn-action btn-icon-only" onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
-            {t.isFavorite ? <Star size={13} /> : <StarOff size={13} />}
+          <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+            {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
           </button>
           {!t.isChild && !t.isFavorite && favoriteParents.length > 0 && (
-            <button className="btn-action btn-items" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Plus size={11} /> Link</button>
+            <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
           )}
           <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
           <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
@@ -917,11 +917,11 @@ const TxnRow = ({ t, isChildRow, expanded, onToggleExpand, onView, onEdit, onDel
       <td>
         <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="info-btn" onClick={() => onInfo(t)} title="View all details"><Info size={13} /></button>
-          <button className="btn-action btn-icon-only" onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
-            {t.isFavorite ? <Star size={13} /> : <StarOff size={13} />}
+          <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+            {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
           </button>
           {!isChildRow && !t.isFavorite && favoriteParents.length > 0 && (
-            <button className="btn-action btn-items" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Plus size={11} /> Link</button>
+            <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
           )}
           {!isChildRow && <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>}
           <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
@@ -1074,6 +1074,16 @@ const TransactionDetails = ({ onAddEntry }) => {
   // Top-level transactions are what the list shows; children only surface when their parent is expanded.
   const topLevel = useMemo(() => txns.filter(t => !t.isChild), [txns]);
   const favoriteParents = useMemo(() => topLevel.filter(t => t.isFavorite), [topLevel]);
+  const sortedTopLevel = useMemo(() => {
+    return [...topLevel].sort((a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      if (a.isFavorite && b.isFavorite) {
+        return (b.favoriteAt || '').localeCompare(a.favoriteAt || '') || (b.date || '').localeCompare(a.date || '');
+      }
+      return (b.date || '').localeCompare(a.date || '');
+    });
+  }, [topLevel]);
 
   const toggleExpand = (id) => setExpandedIds(prev => {
     const next = new Set(prev);
@@ -1106,7 +1116,7 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   const activeFilterCount = useMemo(() => Object.values(filters).filter(v => v !== '').length, [filters]);
 
-  const filtered = useMemo(() => topLevel.filter(t => {
+  const filtered = useMemo(() => sortedTopLevel.filter(t => {
     if (search) {
       const s = search.toLowerCase();
       if (!((t.txnId || '').toLowerCase().includes(s) || (formatPaidBy(t) || '').toLowerCase().includes(s) || (getDescription(t) || '').toLowerCase().includes(s) || (formatMode(t) || '').toLowerCase().includes(s) || (t.date || '').includes(s) || String(t.amount || '').includes(s))) return false;
@@ -1124,7 +1134,7 @@ const TransactionDetails = ({ onAddEntry }) => {
     if (filters.amountMin !== '' && (t.amount || 0) < parseInt(filters.amountMin)) return false;
     if (filters.amountMax !== '' && (t.amount || 0) > parseInt(filters.amountMax)) return false;
     return true;
-  }), [topLevel, search, filters]);
+  }), [sortedTopLevel, search, filters]);
 
   const filteredTotal = useMemo(() => filtered.reduce((s, t) => s + (t.amount || 0), 0), [filtered]);
 
