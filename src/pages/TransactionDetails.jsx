@@ -151,7 +151,7 @@ const DetailRow = ({ label, value, mono }) => (
 const InfoModal = ({ txn, childrenList, onClose, onViewProofs }) => {
   const proofs = getProofsArray(txn);
   const isSplitTxn = txn.isSplit && Array.isArray(txn.splitDetails) && txn.splitDetails.length > 0;
-  const parentFlag = isParentTxn(txn);
+  const parentFlag = (childrenList && childrenList.length > 0) || (txn.childCount || 0) > 0;
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal info-modal" onClick={e => e.stopPropagation()}>
@@ -281,7 +281,7 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
             {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
             {isSplitTxn && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ Split transactions: per-user contributions are locked.</div>}
             {txn.isChild && txn.parentTxnId && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This is a related expense under <strong>{txn.parentTxnId}</strong>. Changing its amount will update that transaction's combined total.</div>}
-            {isParentTxn(txn) && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This transaction has {txn.childCount} related expense{txn.childCount > 1 ? 's' : ''} linked to it (combined total ₹{formatINR(txn.combinedTotal)}). Its own amount below is independent of those.</div>}
+              {parentFlag && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This transaction has {txn.childCount || (childrenList ? childrenList.length : 0)} related expense{(txn.childCount || (childrenList ? childrenList.length : 0)) > 1 ? 's' : ''} linked to it (combined total ₹{formatINR(txn.combinedTotal)}). Its own amount below is independent of those.</div>}
             {!isSplitTxn && (
               <div className="field">
                 <label className="label">Paid By</label>
@@ -724,9 +724,9 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
           <div className="timeline-items">
             {group.items.map(t => {
               const proofs = getProofsArray(t);
-              const parentFlag = isParentTxn(t);
+              const children = getChildrenOf(allTxns, t.id);
+              const parentFlag = children.length > 0 || (t.childCount || 0) > 0;
               const expanded = expandedIds.has(t.id);
-              const children = parentFlag ? getChildrenOf(allTxns, t.id) : [];
               return (
                 <div key={t.id} className="timeline-item">
                   <div className="timeline-dot" />
@@ -810,8 +810,8 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
 // Mobile card
 const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, deleting }) => {
   const proofs = getProofsArray(t);
-  const parentFlag = isParentTxn(t);
-  const children = parentFlag ? getChildrenOf(allTxns, t.id) : [];
+  const children = getChildrenOf(allTxns, t.id);
+  const parentFlag = children.length > 0 || (t.childCount || 0) > 0;
   return (
     <div className="txn-card">
       <div className="txn-card-row">
@@ -885,9 +885,9 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
 };
 
 // Desktop table row — shared by top-level transactions and their nested child rows
-const TxnRow = ({ t, isChildRow, expanded, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, isAdmin, deleting }) => {
+const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, isAdmin, deleting }) => {
   const proofs = getProofsArray(t);
-  const parentFlag = !isChildRow && isParentTxn(t);
+  const parentFlag = !isChildRow && (hasChildren || (t.childCount || 0) > 0);
   return (
     <tr className={isChildRow ? 'txn-row-child' : ''}>
       <td className="mono" style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>
@@ -1262,7 +1262,7 @@ const TransactionDetails = ({ onAddEntry }) => {
               <tbody>
                 {filtered.map(t => (
                   <Fragment key={t.id}>
-                    <TxnRow t={t} isChildRow={false} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+                    <TxnRow t={t} isChildRow={false} hasChildren={getChildrenOf(txns, t.id).length > 0 || (t.childCount || 0) > 0} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
                     {expandedIds.has(t.id) && getChildrenOf(txns, t.id).map(c => (
                       <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
                     ))}
@@ -1278,7 +1278,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       )}
 
       {viewing && <ProofViewer txn={viewing} onClose={() => setViewing(null)} />}
-      {editing && <EditModal txn={editing} approvedUsers={approvedUsers} onClose={() => setEditing(null)} onSaved={handleSaved} />}
+      {editing && <EditModal txn={editing} approvedUsers={approvedUsers} onClose={() => setEditing(null)} onSaved={handleSaved} childrenList={getChildrenOf(txns, editing.id)} />}
       {info && <InfoModal txn={info} childrenList={getChildrenOf(txns, info.id)} onClose={() => setInfo(null)} onViewProofs={t => { setInfo(null); setViewing(t); }} />}
       {addChildFor && <AddChildModal parent={addChildFor} approvedUsers={approvedUsers} user={user} profile={profile} activeBucket={activeBucket} onClose={() => setAddChildFor(null)} onCreated={handleChildAdded} />}
       {linkToFavoriteFor && <LinkToFavoriteModal txn={linkToFavoriteFor} favoriteTxns={favoriteParents} onClose={() => setLinkToFavoriteFor(null)} onSelect={parent => linkTxnToFavorite(linkToFavoriteFor, parent)} />}
