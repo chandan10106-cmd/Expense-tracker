@@ -8,7 +8,7 @@ import { PAYMENT_MODES, getNextTxnId } from '../lib/txnUtils';
 import {
   Eye, Download, X, Search, Trash2, Pencil, Upload, CheckCircle2,
   ChevronLeft, ChevronRight, ChevronDown, Filter, RotateCcw, Info, Plus,
-  List, Clock, FileSpreadsheet, FileText
+  Star, StarOff, List, Clock, FileSpreadsheet, FileText
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -361,36 +361,140 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState('');
   const [paidByUid, setPaidByUid] = useState(user?.uid || '');
+  const [isSplit, setIsSplit] = useState(false);
+  const [selectedUsers, setSelectedUsers] = useState([]);
+  const [splitAmounts, setSplitAmounts] = useState({});
+  const [splitModes, setSplitModes] = useState({});
+  const [lastEditedField, setLastEditedField] = useState(null);
+  const [invalidSplitUsers, setInvalidSplitUsers] = useState([]);
+  const [invalidSplitModes, setInvalidSplitModes] = useState([]);
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const selectedUser = approvedUsers.find(u => u.id === paidByUid) || { id: user?.uid, name: profile?.name || user?.displayName || user?.email, email: user?.email };
 
+  useEffect(() => {
+    if (isSplit && lastEditedField === 'total' && amount && selectedUsers.length > 0) {
+      const total = parseInt(amount);
+      const perPerson = Math.floor(total / selectedUsers.length);
+      const remainder = total - (perPerson * selectedUsers.length);
+      const newAmounts = { ...splitAmounts };
+      selectedUsers.forEach((id, idx) => { newAmounts[id] = idx === 0 ? perPerson + remainder : perPerson; });
+      setSplitAmounts(newAmounts);
+    }
+  }, [amount, isSplit, lastEditedField, selectedUsers]);
+
+  useEffect(() => {
+    if (isSplit && lastEditedField === 'split') {
+      const sum = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
+      setAmount(sum > 0 ? String(sum) : '');
+    }
+  }, [splitAmounts, selectedUsers, isSplit, lastEditedField]);
+
+  const handleAmountChange = (value) => { setAmount(value.replace(/\D/g, '')); setLastEditedField('total'); };
+
+  const toggleSplit = (checked) => {
+    setIsSplit(checked);
+    if (checked) {
+      const initialSelected = user?.uid ? [user.uid] : [];
+      setSelectedUsers(initialSelected);
+      if (amount && initialSelected.length > 0) setSplitAmounts(prev => ({ ...prev, [initialSelected[0]]: parseInt(amount) }));
+      setLastEditedField(amount ? 'total' : null);
+      setInvalidSplitUsers([]);
+      setInvalidSplitModes([]);
+    } else {
+      setSelectedUsers([]);
+      setSplitAmounts({});
+      setSplitModes({});
+      setLastEditedField(null);
+      setInvalidSplitUsers([]);
+      setInvalidSplitModes([]);
+    }
+  };
+
+  const toggleUserInSplit = (uid) => {
+    const isCurrentlySelected = selectedUsers.includes(uid);
+    const nextSelected = isCurrentlySelected ? selectedUsers.filter(id => id !== uid) : [...selectedUsers, uid];
+    setSelectedUsers(nextSelected);
+    if (isCurrentlySelected) {
+      setInvalidSplitUsers(prev => prev.filter(id => id !== uid));
+      setInvalidSplitModes(prev => prev.filter(id => id !== uid));
+    }
+    if (!isCurrentlySelected && lastEditedField === 'total' && amount && nextSelected.length > 0) {
+      const total = parseInt(amount);
+      const perPerson = Math.floor(total / nextSelected.length);
+      const remainder = total - (perPerson * nextSelected.length);
+      const newAmounts = { ...splitAmounts };
+      nextSelected.forEach((id, idx) => { newAmounts[id] = idx === 0 ? perPerson + remainder : perPerson; });
+      setSplitAmounts(newAmounts);
+    }
+  };
+
+  const handleSplitAmountChange = (uid, value) => {
+    setSplitAmounts(prev => ({ ...prev, [uid]: value }));
+    setLastEditedField('split');
+    if (value && parseInt(value) > 0) setInvalidSplitUsers(prev => prev.filter(id => id !== uid));
+  };
+
+  const handleSplitModeChange = (uid, value) => {
+    setSplitModes(prev => ({ ...prev, [uid]: value }));
+    if (value) setInvalidSplitModes(prev => prev.filter(id => id !== uid));
+  };
+
+  const splitTotal = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
+  const splitValid = isSplit ? (selectedUsers.length > 0 && splitTotal > 0 && (!amount || splitTotal === parseInt(amount))) : true;
+  const allModesSelected = isSplit ? selectedUsers.every(uid => splitModes[uid]) : true;
+
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setError('');
     if (!date) return setError('Date is required');
-    if (!amount || parseInt(amount) <= 0) return setError('Amount must be positive');
+    if (!isSplit) {
+      if (!amount || parseInt(amount) <= 0) return setError('Amount must be positive');
+      if (!mode) return setError('Mode is required');
+    }
     if (!description.trim()) return setError('Description is required');
-    if (!mode) return setError('Mode is required');
+    if (isSplit) {
+      if (selectedUsers.length === 0) return setError('Select at least one person for the split');
+      if (splitTotal <= 0) return setError('Enter at least one split amount');
+      const emptyAmounts = selectedUsers.filter(uid => !splitAmounts[uid] || parseInt(splitAmounts[uid]) <= 0);
+      if (emptyAmounts.length > 0) return setError(`Enter an amount for: ${emptyAmounts.map(uid => approvedUsers.find(u => u.id === uid)?.name || uid).join(', ')}`);
+      if (amount && splitTotal !== parseInt(amount)) return setError(`Split amounts (₹${splitTotal}) must add up to ₹${amount}`);
+      const emptyModes = selectedUsers.filter(uid => !splitModes[uid]);
+      if (emptyModes.length > 0) return setError(`Select a payment mode for: ${emptyModes.map(uid => approvedUsers.find(u => u.id === uid)?.name || uid).join(', ')}`);
+    }
     setSaving(true);
     try {
       let proofs = [];
       if (files.length > 0) proofs = await processProofFiles(files);
       const { sequence, id: txnId } = await getNextTxnId();
       const parsedDate = new Date(date);
-      const data = {
+      const finalAmount = isSplit ? splitTotal : parseInt(amount);
+      const baseData = {
         txnId, txnSequence: sequence,
         bucketId: activeBucket.id, bucketName: activeBucket.name,
         createdByUid: user.uid, createdByName: profile?.name || user?.displayName || user?.email,
-        date, amount: parseInt(amount),
+        date, amount: finalAmount,
         paidTo: description.trim(), description: description.trim(),
-        mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email,
-        proofs, deleted: false, isSplit: false,
+        proofs, deleted: false,
         createdAt: new Date().toISOString(),
         year: parsedDate.getFullYear(), month: parsedDate.getMonth() + 1,
         isChild: true, parentId: parent.id, parentTxnId: parent.txnId
       };
+      let data;
+      if (isSplit) {
+        const splitDetails = selectedUsers.map(uid => {
+          const u = approvedUsers.find(x => x.id === uid);
+          return { uid, name: u?.name || u?.email || 'Unknown', email: u?.email, amount: parseInt(splitAmounts[uid] || 0), mode: splitModes[uid] || '' };
+        });
+        const modeCounts = {};
+        splitDetails.forEach(s => { if (s.mode) modeCounts[s.mode] = (modeCounts[s.mode] || 0) + 1; });
+        const primaryMode = Object.keys(modeCounts).sort((a, b) => modeCounts[b] - modeCounts[a])[0] || '';
+        data = { ...baseData, isSplit: true, splitDetails, mode: primaryMode, paidByUid: null, paidByName: 'Split Payment', paidByEmail: null };
+      } else {
+        data = { ...baseData, isSplit: false, mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email };
+      }
       const ref = await addDoc(collection(db, 'transactions'), data);
       onCreated({ id: ref.id, ...data });
     } catch (err) { setError(err.message || 'Failed to save'); }
@@ -412,25 +516,72 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
             {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
             <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This creates its own transaction (own date, payer, proof) that counts independently in reports, and adds its amount to {parent.txnId}'s combined total in this list.</div>
             <div className="field">
-              <label className="label">Paid By</label>
-              <select className="select" value={paidByUid} onChange={e => setPaidByUid(e.target.value)}>
-                {approvedUsers.map(u => <option key={u.id} value={u.id}>{u.name || u.email}{u.id === user?.uid ? ' (you)' : ''}</option>)}
-              </select>
+              <label className="label">Split transaction?</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, margin: 0 }}>
+                <input type="checkbox" checked={isSplit} onChange={e => toggleSplit(e.target.checked)} />
+                <span style={{ color: 'var(--muted)', fontSize: 13 }}>Split amount across multiple people</span>
+              </label>
             </div>
             <div className="form-grid">
               <div className="field"><label className="label">Date *</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
-              <div className="field"><label className="label">Amount (INR) *</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => setAmount(e.target.value.replace(/\D/g, ''))} required /></div>
+              <div className="field"><label className="label">Amount (INR) * {isSplit && <span style={{ color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>(auto-syncs)</span>}</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => handleAmountChange(e.target.value)} required={!isSplit} /></div>
             </div>
+            {isSplit ? (
+              <div style={{ border: '1px solid var(--cream-3)', borderRadius: 10, padding: 14, background: 'rgba(255,252,245,0.7)', marginBottom: 16 }}>
+                <div style={{ marginBottom: 10, fontSize: 13, color: 'var(--muted)' }}>Select people to split this expense and enter their individual share.</div>
+                {approvedUsers.map(u => {
+                  const selected = selectedUsers.includes(u.id);
+                  const modeInvalid = invalidSplitModes.includes(u.id);
+                  const amountInvalid = invalidSplitUsers.includes(u.id);
+                  return (
+                    <div key={u.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--cream-3)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <input type="checkbox" checked={selected} onChange={() => toggleUserInSplit(u.id)} />
+                        <span style={{ fontSize: 13 }}>{u.name || u.email}{u.id === user?.uid ? ' (you)' : ''}</span>
+                      </div>
+                      {selected && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div>
+                            <label className="label" style={{ marginBottom: 6 }}>Amount *</label>
+                            <input className={`input mono ${amountInvalid ? 'input-error' : ''}`} type="text" inputMode="numeric" value={splitAmounts[u.id] || ''} onChange={e => handleSplitAmountChange(u.id, e.target.value.replace(/\D/g, ''))} />
+                          </div>
+                          <div>
+                            <label className="label" style={{ marginBottom: 6 }}>Mode *</label>
+                            <select className={`select split-mode-select ${modeInvalid ? 'input-error' : ''}`} value={splitModes[u.id] || ''} onChange={e => handleSplitModeChange(u.id, e.target.value)}>
+                              <option value="">Select…</option>
+                              {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{ marginTop: 12, fontSize: 13, color: 'var(--muted)' }}>
+                  Split total: <strong>₹{formatINR(splitTotal)}</strong>
+                  {amount ? <span> · Amount field: ₹{formatINR(amount)}</span> : null}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="field">
+                  <label className="label">Paid By</label>
+                  <select className="select" value={paidByUid} onChange={e => setPaidByUid(e.target.value)}>
+                    {approvedUsers.map(u => <option key={u.id} value={u.id}>{u.name || u.email}{u.id === user?.uid ? ' (you)' : ''}</option>)}
+                  </select>
+                </div>
+                <div className="field">
+                  <label className="label">Mode of Payment *</label>
+                  <select className="select" value={mode} onChange={e => setMode(e.target.value)} required>
+                    <option value="">Select…</option>
+                    {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </>
+            )}
             <div className="field">
               <label className="label">Description * ({description.length}/300)</label>
               <textarea className="textarea" value={description} onChange={e => setDescription(e.target.value.slice(0, 300))} maxLength="300" required />
-            </div>
-            <div className="field">
-              <label className="label">Mode of Payment *</label>
-              <select className="select" value={mode} onChange={e => setMode(e.target.value)} required>
-                <option value="">Select…</option>
-                {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
             </div>
             <div className="field">
               <label className="label">Proof (optional · up to {MAX_IMAGES_PER_TXN} files)</label>
@@ -468,6 +619,59 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
   );
 };
 
+const LinkToFavoriteModal = ({ txn, favoriteTxns, onClose, onSelect }) => {
+  const [selectedParent, setSelectedParent] = useState(favoriteTxns[0]?.id || '');
+  const [error, setError] = useState('');
+
+  if (!txn) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal edit-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <div style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 600 }}>Link to Favorite Transaction</div>
+            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>Attach {txn.txnId || ''} as a related expense to a favorite transaction.</div>
+          </div>
+          <button className="btn btn-ghost" onClick={onClose} style={{ padding: '8px 12px' }}><X size={14} /></button>
+        </div>
+        <form onSubmit={e => {
+          e.preventDefault();
+          if (!selectedParent) { setError('Select a favorite transaction'); return; }
+          const parent = favoriteTxns.find(t => t.id === selectedParent);
+          if (!parent) { setError('Selected transaction is invalid'); return; }
+          onSelect(parent);
+        }} className="edit-form">
+          <div className="edit-form-body">
+            {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
+            <div className="field">
+              <label className="label">Favorite transaction *</label>
+              <select className="select" value={selectedParent} onChange={e => setSelectedParent(e.target.value)} required>
+                <option value="">Select…</option>
+                {favoriteTxns.map(fav => (
+                  <option key={fav.id} value={fav.id}>{fav.txnId} · ₹{formatINR(fav.amount)} · {getDescription(fav).slice(0, 40)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label className="label">Child transaction</label>
+              <div style={{ padding: '10px 12px', border: '1px solid var(--cream-3)', borderRadius: 'var(--radius)', background: 'rgba(255,252,245,0.6)' }}>
+                <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>{txn.txnId}</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>₹{formatINR(txn.amount)}</div>
+                <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>{getDescription(txn)}</div>
+              </div>
+            </div>
+          </div>
+          <div className="edit-form-footer">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-primary">Link as Child</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 const FilterPanel = ({ filters, setFilters, paidByOptions, onReset }) => (
   <div className="filter-panel">
     <div className="filter-panel-grid">
@@ -496,7 +700,7 @@ const FilterPanel = ({ filters, setFilters, paidByOptions, onReset }) => (
 
 // Timeline view — grouped by month. Children are nested inside their parent's card, not
 // re-bucketed by their own month, so the group stays anchored to the parent's date.
-const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, isAdmin, deleting }) => {
+const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, isAdmin, deleting }) => {
   const grouped = useMemo(() => {
     const map = new Map();
     transactions.forEach(t => {
@@ -547,6 +751,12 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                         ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> View {proofs.length > 1 ? `(${proofs.length})` : ''}</button>
                         : <span className="no-proof" style={{ fontSize: 11 }}>no proof</span>}
                       <button className="info-btn" onClick={() => onInfo(t)} title="Details"><Info size={13} /></button>
+                      <button className="btn-action btn-icon-only" onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+                        {t.isFavorite ? <Star size={13} /> : <StarOff size={13} />}
+                      </button>
+                      {!t.isChild && !t.isFavorite && favoriteParents.length > 0 && (
+                        <button className="btn-action btn-items" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Plus size={11} /> Link</button>
+                      )}
                       <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
                       <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
                       {isAdmin && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
@@ -598,7 +808,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
 };
 
 // Mobile card
-const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, deleting }) => {
+const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, deleting }) => {
   const proofs = getProofsArray(t);
   const parentFlag = isParentTxn(t);
   const children = parentFlag ? getChildrenOf(allTxns, t.id) : [];
@@ -625,6 +835,12 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
         {proofs.length > 0 ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> {proofs.length > 1 ? `View (${proofs.length})` : 'View'}</button> : <span className="no-proof">no proof</span>}
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
           <button className="info-btn" onClick={() => onInfo(t)} title="Details"><Info size={13} /></button>
+          <button className="btn-action btn-icon-only" onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+            {t.isFavorite ? <Star size={13} /> : <StarOff size={13} />}
+          </button>
+          {!t.isChild && !t.isFavorite && favoriteParents.length > 0 && (
+            <button className="btn-action btn-items" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Plus size={11} /> Link</button>
+          )}
           <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
           <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
           {canDelete && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Delete" aria-label="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
@@ -669,7 +885,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
 };
 
 // Desktop table row — shared by top-level transactions and their nested child rows
-const TxnRow = ({ t, isChildRow, expanded, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, isAdmin, deleting }) => {
+const TxnRow = ({ t, isChildRow, expanded, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, isAdmin, deleting }) => {
   const proofs = getProofsArray(t);
   const parentFlag = !isChildRow && isParentTxn(t);
   return (
@@ -701,6 +917,12 @@ const TxnRow = ({ t, isChildRow, expanded, onToggleExpand, onView, onEdit, onDel
       <td>
         <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="info-btn" onClick={() => onInfo(t)} title="View all details"><Info size={13} /></button>
+          <button className="btn-action btn-icon-only" onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+            {t.isFavorite ? <Star size={13} /> : <StarOff size={13} />}
+          </button>
+          {!isChildRow && !t.isFavorite && favoriteParents.length > 0 && (
+            <button className="btn-action btn-items" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Plus size={11} /> Link</button>
+          )}
           {!isChildRow && <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>}
           <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
           {isAdmin && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Move to Recycle Bin" aria-label="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
@@ -823,6 +1045,7 @@ const TransactionDetails = ({ onAddEntry }) => {
   const [editing, setEditing] = useState(null);
   const [info, setInfo] = useState(null);
   const [addChildFor, setAddChildFor] = useState(null);
+  const [linkToFavoriteFor, setLinkToFavoriteFor] = useState(null);
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [deleting, setDeleting] = useState(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -850,6 +1073,7 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   // Top-level transactions are what the list shows; children only surface when their parent is expanded.
   const topLevel = useMemo(() => txns.filter(t => !t.isChild), [txns]);
+  const favoriteParents = useMemo(() => topLevel.filter(t => t.isFavorite), [topLevel]);
 
   const toggleExpand = (id) => setExpandedIds(prev => {
     const next = new Set(prev);
@@ -943,6 +1167,38 @@ const TransactionDetails = ({ onAddEntry }) => {
     setExpandedIds(prev => new Set(prev).add(newChild.parentId));
   };
 
+  const toggleFavorite = async (txn) => {
+    try {
+      const updates = {
+        isFavorite: !txn.isFavorite,
+        favoriteByUid: !txn.isFavorite ? user.uid : null,
+        favoriteByName: !txn.isFavorite ? (profile?.name || user?.displayName || user?.email) : null,
+        favoriteAt: !txn.isFavorite ? new Date().toISOString() : null
+      };
+      await updateDoc(doc(db, 'transactions', txn.id), updates);
+      setTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...updates } : t));
+    } catch (e) {
+      alert('Failed to update favorite: ' + (e.message || e));
+    }
+  };
+
+  const linkTxnToFavorite = async (txn, parent) => {
+    try {
+      await updateDoc(doc(db, 'transactions', txn.id), {
+        isChild: true,
+        parentId: parent.id,
+        parentTxnId: parent.txnId,
+        updatedAt: new Date().toISOString()
+      });
+      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, isChild: true, parentId: parent.id, parentTxnId: parent.txnId } : t);
+      setTxns(nextTxns);
+      setLinkToFavoriteFor(null);
+      recomputeParentTotals(parent.id, nextTxns);
+    } catch (e) {
+      alert('Failed to link transaction: ' + (e.message || e));
+    }
+  };
+
   if (loading) return <div className="loading-shell"><div className="spinner"></div></div>;
 
   return (
@@ -985,7 +1241,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {filtered.length === 0 ? (
         <div className="empty-state card"><h3>No transactions found</h3><p>{topLevel.length === 0 ? 'Add a transaction to get started.' : 'Try adjusting your search or filters.'}</p></div>
       ) : viewMode === 'timeline' ? (
-        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} isAdmin={isAdmin} deleting={deleting} />
+        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
       ) : (
         <>
           <div className="table-wrap desktop-only">
@@ -996,9 +1252,9 @@ const TransactionDetails = ({ onAddEntry }) => {
               <tbody>
                 {filtered.map(t => (
                   <Fragment key={t.id}>
-                    <TxnRow t={t} isChildRow={false} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} isAdmin={isAdmin} deleting={deleting} />
+                    <TxnRow t={t} isChildRow={false} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
                     {expandedIds.has(t.id) && getChildrenOf(txns, t.id).map(c => (
-                      <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} isAdmin={isAdmin} deleting={deleting} />
+                      <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
                     ))}
                   </Fragment>
                 ))}
@@ -1006,7 +1262,7 @@ const TransactionDetails = ({ onAddEntry }) => {
             </table>
           </div>
           <div className="mobile-only txn-card-list">
-            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} deleting={deleting} />)}
+            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} deleting={deleting} />)}
           </div>
         </>
       )}
@@ -1015,6 +1271,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {editing && <EditModal txn={editing} approvedUsers={approvedUsers} onClose={() => setEditing(null)} onSaved={handleSaved} />}
       {info && <InfoModal txn={info} childrenList={getChildrenOf(txns, info.id)} onClose={() => setInfo(null)} onViewProofs={t => { setInfo(null); setViewing(t); }} />}
       {addChildFor && <AddChildModal parent={addChildFor} approvedUsers={approvedUsers} user={user} profile={profile} activeBucket={activeBucket} onClose={() => setAddChildFor(null)} onCreated={handleChildAdded} />}
+      {linkToFavoriteFor && <LinkToFavoriteModal txn={linkToFavoriteFor} favoriteTxns={favoriteParents} onClose={() => setLinkToFavoriteFor(null)} onSelect={parent => linkTxnToFavorite(linkToFavoriteFor, parent)} />}
       {showExport && <ExportModal onClose={() => setShowExport(false)} filtered={filtered} allTxns={topLevel} bucketName={activeBucket.name} />}
     </div>
   );
