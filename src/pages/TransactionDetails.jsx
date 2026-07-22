@@ -298,7 +298,6 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
             {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
             {isSplitTxn && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ Split transactions: per-user contributions are locked.</div>}
             {txn.isChild && txn.parentTxnId && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This is a related expense under <strong>{txn.parentTxnId}</strong>. Changing its amount will update that transaction's combined total.</div>}
-              {parentFlag && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This transaction has {txn.childCount || (childrenList ? childrenList.length : 0)} related expense{(txn.childCount || (childrenList ? childrenList.length : 0)) > 1 ? 's' : ''} linked to it (combined total ₹{formatINR(txn.combinedTotal)}). Its own amount below is independent of those.</div>}
             {!isSplitTxn && (
               <div className="field">
                 <label className="label">Paid By</label>
@@ -717,7 +716,7 @@ const FilterPanel = ({ filters, setFilters, paidByOptions, onReset }) => (
 
 // Timeline view — grouped by month. Children are nested inside their parent's card, not
 // re-bucketed by their own month, so the group stays anchored to the parent's date.
-const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, isAdmin, deleting }) => {
+const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting }) => {
   const grouped = useMemo(() => {
     const map = new Map();
     transactions.forEach(t => {
@@ -764,7 +763,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                       <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}>{formatMode(t)}</span>
                       <span style={{ fontSize: 12, color: 'var(--muted)' }}>· {formatPaidBy(t)}</span>
                     </div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {proofs.length > 0
                         ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> View {proofs.length > 1 ? `(${proofs.length})` : ''}</button>
                         : <span className="no-proof" style={{ fontSize: 11 }}>no proof</span>}
@@ -806,6 +805,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                                   : <span className="no-proof" style={{ fontSize: 10 }}>no proof</span>}
                                 <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
                                   <button className="btn-action btn-edit" onClick={() => onEdit(c)}><Pencil size={10} /></button>
+                                  {onRemoveFromParent && <button className="btn-action btn-icon-only" onClick={() => onRemoveFromParent(c)} title="Remove from parent"><RotateCcw size={12} /></button>}
                                   {isAdmin && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(c)} disabled={deleting === c.id} title="Delete"><Trash2 size={11} /></button>}
                                 </div>
                               </div>
@@ -826,7 +826,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
 };
 
 // Mobile card
-const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, deleting }) => {
+const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, deleting }) => {
   const proofs = getProofsArray(t);
   const children = getChildrenOf(allTxns, t.id);
   const parentFlag = children.length > 0 || (t.childCount || 0) > 0;
@@ -851,15 +851,21 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
       </div>
       <div className="txn-card-actions">
         {proofs.length > 0 ? <button className="view-btn" onClick={() => onView(t)}><Eye size={12} /> {proofs.length > 1 ? `View (${proofs.length})` : 'View'}</button> : <span className="no-proof">no proof</span>}
-        <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', flexWrap: 'wrap' }}>
           <button className="info-btn" onClick={() => onInfo(t)} title="Details"><Info size={13} /></button>
-          <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
-            {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
-          </button>
-          {!t.isChild && !t.isFavorite && favoriteParents.length > 0 && (
-            <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
+          {t.isChild ? (
+            onRemoveFromParent && <button className="btn-action btn-icon-only" onClick={() => onRemoveFromParent(t)} title="Remove from parent"><RotateCcw size={14} /></button>
+          ) : (
+            <>
+              <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+                {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
+              </button>
+              {!t.isFavorite && favoriteParents.length > 0 && (
+                <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
+              )}
+              <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
+            </>
           )}
-          <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
           <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
           {canDelete && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Delete" aria-label="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
         </div>
@@ -903,7 +909,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
 };
 
 // Desktop table row — shared by top-level transactions and their nested child rows
-const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, favoriteParents, isAdmin, deleting }) => {
+const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting }) => {
   const proofs = getProofsArray(t);
   const parentFlag = !isChildRow && (hasChildren || (t.childCount || 0) > 0);
   return (
@@ -935,13 +941,19 @@ const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, 
       <td>
         <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="info-btn" onClick={() => onInfo(t)} title="View all details"><Info size={13} /></button>
-          <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
-            {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
-          </button>
-          {!isChildRow && !t.isFavorite && favoriteParents.length > 0 && (
-            <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
+          {t.isChild ? (
+            onRemoveFromParent && <button className="btn-action btn-icon-only" onClick={() => onRemoveFromParent(t)} title="Remove from parent"><RotateCcw size={14} /></button>
+          ) : (
+            <>
+              <button className={`btn-action btn-icon-only star-toggle ${t.isFavorite ? 'active' : ''}`} onClick={() => onToggleFavorite(t)} title={t.isFavorite ? 'Unfavorite' : 'Favorite'}>
+                {t.isFavorite ? <Star size={16} /> : <StarOff size={14} />}
+              </button>
+              {!t.isFavorite && favoriteParents.length > 0 && (
+                <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
+              )}
+              <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
+            </>
           )}
-          {!isChildRow && <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>}
           <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
           {isAdmin && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Move to Recycle Bin" aria-label="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
         </div>
@@ -1224,6 +1236,24 @@ const TransactionDetails = ({ onAddEntry }) => {
       recomputeParentTotals(parent.id, nextTxns);
     } catch (e) {
       alert('Failed to link transaction: ' + (e.message || e));
+    }
+  };
+
+  const removeChildFromParent = async (txn) => {
+    if (!txn || !txn.isChild) return;
+    const prevParentId = txn.parentId;
+    try {
+      await updateDoc(doc(db, 'transactions', txn.id), {
+        isChild: false,
+        parentId: null,
+        parentTxnId: null,
+        updatedAt: new Date().toISOString()
+      });
+      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, isChild: false, parentId: null, parentTxnId: null } : t);
+      setTxns(nextTxns);
+      if (prevParentId) await recomputeParentTotals(prevParentId, nextTxns);
+    } catch (e) {
+      alert('Failed to remove related expense: ' + (e.message || e));
     }
   };
 
