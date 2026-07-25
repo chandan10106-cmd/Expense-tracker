@@ -85,7 +85,7 @@ const AppHome = () => {
         )}
       </nav>
 
-      <main className="app-content" style={{ paddingBottom: 80 }}>
+      <main className="app-content">
         {tab === 'dashboard' && <Dashboard onAddEntry={() => setTab('update')} />}
         {tab === 'update' && <UpdateDetails onSaved={() => setTab('transactions')} />}
         {tab === 'transactions' && <TransactionDetails onAddEntry={() => setTab('update')} />}
