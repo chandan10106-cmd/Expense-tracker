@@ -94,23 +94,23 @@ const AppHome = () => {
 
       {/* Mobile bottom nav */}
       <nav className="mobile-bottom-nav mobile-only">
-        <button className={`bottom-nav-btn ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
+        <button type="button" className={`bottom-nav-btn ${tab === 'dashboard' ? 'active' : ''}`} onClick={() => setTab('dashboard')}>
           <BarChart3 size={20} />
           <span>Dashboard</span>
         </button>
-        <button className={`bottom-nav-btn ${tab === 'update' ? 'active' : ''}`} onClick={() => setTab('update')}>
+        <button type="button" className={`bottom-nav-btn ${tab === 'update' ? 'active' : ''}`} onClick={() => setTab('update')}>
           <FilePlus size={20} />
           <span>Add Entry</span>
         </button>
-        <button className={`bottom-nav-btn ${tab === 'transactions' ? 'active' : ''}`} onClick={() => setTab('transactions')}>
+        <button type="button" className={`bottom-nav-btn ${tab === 'transactions' ? 'active' : ''}`} onClick={() => setTab('transactions')}>
           <Receipt size={20} />
           <span>Transactions</span>
         </button>
         {isAdmin && (
-          <button className={`bottom-nav-btn ${tab === 'admin' ? 'active' : ''}`} onClick={() => setTab('admin')} style={{ position: 'relative' }}>
+          <button type="button" className={`bottom-nav-btn ${tab === 'admin' ? 'active' : ''}`} onClick={() => setTab('admin')}>
             <Users size={20} />
-            {pendingCount > 0 && <span className="bottom-nav-badge">{pendingCount}</span>}
             <span>Admin</span>
+            {pendingCount > 0 && <span className="bottom-nav-badge">{pendingCount}</span>}
           </button>
         )}
       </nav>
