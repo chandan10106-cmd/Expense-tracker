@@ -15,18 +15,17 @@ import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
 import * as XLSX from 'xlsx';
 
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
-const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return d; } };
-const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
-const formatInputDate = (value) => {
-  if (!value) return '';
+const formatDate = (d) => {
+  if (!d) return '';
   try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return value;
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
+    const date = new Date(d);
+    if (Number.isNaN(date.getTime())) return d;
+    return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
   } catch {
-    return value;
+    return d;
   }
 };
+const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
 
 const getProofsArray = (t) => {
   if (Array.isArray(t.proofs) && t.proofs.length > 0) return t.proofs;
@@ -320,7 +319,7 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
               </div>
             )}
             <div className="form-grid">
-              <div className="field"><label className="label">Date *</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
+              <div className="field"><label className="label">Date *</label><input className="input" type="date" lang="en-GB" value={date} onChange={e => setDate(e.target.value)} required /></div>
               <div className="field"><label className="label">Amount (INR) *</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => setAmount(formatWithCommas(e.target.value))} required /></div>
             </div>
             <div className="field">
@@ -552,8 +551,8 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
               </label>
             </div>
             <div className="form-grid">
-              <div className="field"><label className="label">Date *</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required />
-                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>Selected date: {formatInputDate(date)}</div>
+              <div className="field"><label className="label">Date *</label><input className="input" type="date" lang="en-GB" value={date} onChange={e => setDate(e.target.value)} required />
+                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>Selected date: {formatDate(date)}</div>
               </div>
               <div className="field"><label className="label">Amount (INR) * {isSplit && <span style={{ color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>(auto-syncs)</span>}</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => handleAmountChange(e.target.value)} required={!isSplit} /></div>
             </div>
@@ -706,8 +705,8 @@ const LinkToFavoriteModal = ({ txn, favoriteTxns, onClose, onSelect }) => {
 const FilterPanel = ({ filters, setFilters, paidByOptions, onReset }) => (
   <div className="filter-panel">
     <div className="filter-panel-grid">
-      <div className="field" style={{ marginBottom: 0 }}><label className="label">Date — from</label><input className="input" type="date" value={filters.dateFrom} onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))} /></div>
-      <div className="field" style={{ marginBottom: 0 }}><label className="label">Date — to</label><input className="input" type="date" value={filters.dateTo} onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))} /></div>
+      <div className="field" style={{ marginBottom: 0 }}><label className="label">Date — from</label><input className="input" type="date" lang="en-GB" value={filters.dateFrom} onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))} /></div>
+      <div className="field" style={{ marginBottom: 0 }}><label className="label">Date — to</label><input className="input" type="date" lang="en-GB" value={filters.dateTo} onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))} /></div>
       <div className="field" style={{ marginBottom: 0 }}>
         <label className="label">Paid by</label>
         <select className="select" value={filters.paidBy} onChange={e => setFilters(f => ({ ...f, paidBy: e.target.value }))}>

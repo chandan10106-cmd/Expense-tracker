@@ -280,7 +280,7 @@ const UpdateDetails = ({ onSaved }) => {
         <div className="form-grid">
           <div className="field">
             <label className="label">Date *</label>
-            <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required />
+            <input className="input" type="date" lang="en-GB" value={date} onChange={e => setDate(e.target.value)} required />
             <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>Selected date: {formatInputDate(date)}</div>
           </div>
           <div className="field">
