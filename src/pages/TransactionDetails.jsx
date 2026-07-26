@@ -984,6 +984,7 @@ const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
   const exportExcel = () => {
     const rows = data.map(t => ({
       'TX ID': t.txnId || '',
+      'Related To': t.isChild ? (t.parentTxnId || '') : '',
       'Date': t.date,
       'Paid By': formatPaidBy(t),
       'Description': getDescription(t),
@@ -1022,7 +1023,7 @@ const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
         <thead><tr><th>TX ID</th><th>Date</th><th>Paid By</th><th>Description</th><th>Mode</th><th style="text-align:right">Amount</th></tr></thead>
         <tbody>
           ${data.map(t => `<tr>
-            <td style="font-family:monospace;font-size:11px;color:#b8451f">${t.txnId || '—'}</td>
+            <td style="font-family:monospace;font-size:11px;color:#b8451f">${t.txnId || '—'}${t.isChild && t.parentTxnId ? ` <span style="color:#6b6357">(↳ ${t.parentTxnId})</span>` : ''}</td>
             <td>${formatDate(t.date)}</td>
             <td>${formatPaidBy(t)}</td>
             <td>${getDescription(t)}</td>
@@ -1191,6 +1192,14 @@ const TransactionDetails = ({ onAddEntry }) => {
   }), [sortedTopLevel, search, filters]);
 
   const filteredTotal = useMemo(() => filtered.reduce((s, t) => s + (t.amount || 0), 0), [filtered]);
+
+  // Export/totals must match the Dashboard, which sums every non-deleted transaction
+  // (parents and children alike) — so exports need children flattened back in, not just parents.
+  const filteredWithChildren = useMemo(() => {
+    const result = [];
+    filtered.forEach(t => { result.push(t); result.push(...getChildrenOf(txns, t.id)); });
+    return result;
+  }, [filtered, txns]);
 
   const handleDelete = async (txn) => {
     if (!isAdmin) return;
@@ -1363,7 +1372,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {info && <InfoModal txn={info} childrenList={getChildrenOf(txns, info.id)} onClose={() => setInfo(null)} onViewProofs={t => { setInfo(null); setViewing(t); }} />}
       {addChildFor && <AddChildModal parent={addChildFor} approvedUsers={approvedUsers} user={user} profile={profile} activeBucket={activeBucket} onClose={() => setAddChildFor(null)} onCreated={handleChildAdded} />}
       {linkToFavoriteFor && <LinkToFavoriteModal txn={linkToFavoriteFor} favoriteTxns={favoriteParents} onClose={() => setLinkToFavoriteFor(null)} onSelect={parent => linkTxnToFavorite(linkToFavoriteFor, parent)} />}
-      {showExport && <ExportModal onClose={() => setShowExport(false)} filtered={filtered} allTxns={topLevel} bucketName={activeBucket.name} />}
+      {showExport && <ExportModal onClose={() => setShowExport(false)} filtered={filteredWithChildren} allTxns={txns} bucketName={activeBucket.name} />}
 
       {/* debug overlay removed */}
     </div>
