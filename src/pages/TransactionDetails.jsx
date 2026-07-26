@@ -911,6 +911,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
                 {getProofsArray(c).length > 0 ? <button className="view-btn" onClick={() => onView(c)}><Eye size={11} /> View</button> : <span className="no-proof">no proof</span>}
                 <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
                   <button className="btn-action btn-edit" onClick={() => onEdit(c)}><Pencil size={10} /></button>
+                  {onRemoveFromParent && <button className="btn-action btn-icon-only" onClick={() => onRemoveFromParent(c)} title="Remove from parent"><RotateCcw size={11} /></button>}
                   {canDelete && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(c)} disabled={deleting === c.id} title="Delete"><Trash2 size={11} /></button>}
                 </div>
               </div>
@@ -1279,6 +1280,7 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   const removeChildFromParent = async (txn) => {
     if (!txn || !txn.isChild) return;
+    if (!confirm(`Unlink ${txn.txnId} from ${txn.parentTxnId || 'its parent'}?\n\nIt will become a standalone transaction.`)) return;
     const prevParentId = txn.parentId;
     try {
       await updateDoc(doc(db, 'transactions', txn.id), {
@@ -1337,7 +1339,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {filtered.length === 0 ? (
         <div className="empty-state card"><h3>No transactions found</h3><p>{topLevel.length === 0 ? 'Add a transaction to get started.' : 'Try adjusting your search or filters.'}</p></div>
       ) : viewMode === 'timeline' ? (
-        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
       ) : (
         <>
           <div className="table-wrap desktop-only">
@@ -1353,7 +1355,7 @@ const TransactionDetails = ({ onAddEntry }) => {
                       const children = getChildrenOf(txns, t.id);
                       // no-op
                       return (expandedIds.has(t.id) && children.map(c => (
-                        <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+                        <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
                       )));
                     })()}
                   </Fragment>
@@ -1362,7 +1364,7 @@ const TransactionDetails = ({ onAddEntry }) => {
             </table>
           </div>
           <div className="mobile-only txn-card-list">
-            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} deleting={deleting} />)}
+            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} deleting={deleting} />)}
           </div>
         </>
       )}
