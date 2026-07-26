@@ -56,15 +56,54 @@ service cloud.firestore {
     }
 
     match /buckets/{bucketId} {
-      allow read: if isApproved();
+      // Only approved users who are members of the bucket (or primary admins) can read a bucket
+      allow read: if isApproved() && (
+        isPrimaryAdmin() ||
+        (exists(/databases/$(database)/documents/buckets/$(bucketId)) && request.auth.uid in get(/databases/$(database)/documents/buckets/$(bucketId)).data.members)
+      );
+      // Only primary admins can create/update/delete buckets
       allow create, update, delete: if isPrimaryAdmin();
     }
 
     match /transactions/{txnId} {
-      allow read: if isApproved();
-      allow create: if isApproved();
-      allow update: if isApproved();
-      allow delete: if isAdmin();
+      // Transactions are always tied to a bucket via `bucketId`.
+      // Read/create/update/delete require that the caller is approved
+      // AND is a member of the transaction's bucket (or is a primary admin).
+
+      // Read (get): resource is available for single-document reads
+      allow get: if isApproved() && (
+        isPrimaryAdmin() || (resource.data.bucketId != null && request.auth.uid in get(/databases/$(database)/documents/buckets/$(resource.data.bucketId)).data.members)
+      );
+
+      // Create: incoming data must include a bucketId and the caller must be a member of that bucket
+      allow create: if isApproved() && (
+        isPrimaryAdmin() || (
+          request.resource.data.bucketId != null &&
+          exists(/databases/$(database)/documents/buckets/$(request.resource.data.bucketId)) &&
+          request.auth.uid in get(/databases/$(database)/documents/buckets/$(request.resource.data.bucketId)).data.members
+        )
+      );
+
+      // Update: only allowed if the caller is member of the bucket the transaction belongs to
+      allow update: if isApproved() && (
+        isPrimaryAdmin() || (
+          resource.data.bucketId != null &&
+          request.auth.uid in get(/databases/$(database)/documents/buckets/$(resource.data.bucketId)).data.members
+        )
+      );
+
+      // Delete: only admins may soft-delete transactions; ensure they are bucket members (or primary)
+      allow delete: if isAdmin() && (
+        isPrimaryAdmin() || (
+          resource.data.bucketId != null &&
+          request.auth.uid in get(/databases/$(database)/documents/buckets/$(resource.data.bucketId)).data.members
+        )
+      );
+
+      // NOTE: list queries must be constrained client-side to a single `bucketId` equality filter
+      // so that the above per-document checks apply. Firestore security rules for list operations
+      // evaluate on each returned document; the safest pattern is to require the client to query
+      // with `.where('bucketId', '==', selectedBucketId)` so only documents from one bucket are returned.
     }
   }
 }

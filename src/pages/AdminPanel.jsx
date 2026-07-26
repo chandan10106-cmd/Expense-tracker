@@ -153,11 +153,13 @@ const AdminPanel = ({ onPendingChange }) => {
   const updateUser = async (uid, updates) => {
     setUpdating(uid);
     try {
-      await updateDoc(doc(db, 'users', uid), updates);
+      const p = updateDoc(doc(db, 'users', uid), updates);
+      await p;
       setUsers(prev => prev.map(u => u.id === uid ? { ...u, ...updates } : u));
       const pending = users.filter(u => u.id !== uid ? (u.status || 'pending') === 'pending' : updates.status === 'pending').length;
       if (onPendingChange) onPendingChange(pending);
-    } catch (e) { alert('Failed: ' + e.message); }
+      return true;
+    } catch (e) { alert('Failed: ' + e.message); return false; }
     finally { setUpdating(null); }
   };
 
@@ -269,7 +271,17 @@ const AdminPanel = ({ onPendingChange }) => {
                         {status === 'approved' && (
                           <>
                             {!isAdminRole
-                              ? <button className="btn-action btn-promote" onClick={() => handleMakeAdmin(u)} disabled={updating === u.id}><ShieldCheck size={12} /> Make Admin</button>
+                              ? <button className="btn-action btn-promote" onClick={async () => {
+                                  const ok = await handleMakeAdmin(u);
+                                  if (ok) {
+                                    if (isPrimary) {
+                                      alert(`${u.name || u.email} is now an admin.\n\nAdmins are NOT automatically added to buckets — add them to the relevant buckets from Admin → Buckets.`);
+                                      setAdminTab('buckets');
+                                    } else {
+                                      alert(`${u.name || u.email} is now an admin.\n\nThey must be added to buckets to view project data.`);
+                                    }
+                                  }
+                                }} disabled={updating === u.id}><ShieldCheck size={12} /> Make Admin</button>
                               : <button className="btn-action btn-demote" onClick={() => handleRevokeAdmin(u)} disabled={updating === u.id}><ShieldOff size={12} /> Revoke Admin</button>}
                             <button className="btn-action btn-reject" onClick={() => handleReject(u)} disabled={updating === u.id}><X size={12} /> Revoke Access</button>
                           </>
