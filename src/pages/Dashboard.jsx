@@ -38,7 +38,9 @@ const Dashboard = ({ onAddEntry }) => {
           } catch (e) {
             console.error('Indexed query failed, falling back to full collection:', e.message || e);
             const snap = await getDocs(collection(db, 'transactions'));
-            return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            return snap.docs
+              .map(d => ({ id: d.id, ...d.data() }))
+              .filter(t => t.bucketId === activeBucket.id);
           }
         }, 1000 * 30);
         setTxns(all.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
