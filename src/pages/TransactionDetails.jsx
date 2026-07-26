@@ -19,8 +19,13 @@ const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN',
 const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
 const formatInputDate = (value) => {
   if (!value) return '';
-  const [year, month, day] = String(value).split('-');
-  return day && month && year ? `${day}/${month}/${year}` : value;
+  try {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
+  } catch {
+    return value;
+  }
 };
 
 const getProofsArray = (t) => {
