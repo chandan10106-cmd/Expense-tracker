@@ -31,9 +31,15 @@ const Dashboard = ({ onAddEntry }) => {
         if (!activeBucket || !activeBucket.id) { setTxns([]); return; }
         const key = `txns:bucket:${activeBucket.id}`;
         const all = await cache.fetchWithCache(key, async () => {
-          const q = query(collection(db, 'transactions'), where('bucketId', '==', activeBucket.id), orderBy('date', 'desc'));
-          const snap = await getDocs(q);
-          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          try {
+            const q = query(collection(db, 'transactions'), where('bucketId', '==', activeBucket.id), orderBy('date', 'desc'));
+            const snap = await getDocs(q);
+            return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          } catch (e) {
+            console.error('Indexed query failed, falling back to full collection:', e.message || e);
+            const snap = await getDocs(collection(db, 'transactions'));
+            return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          }
         }, 1000 * 30);
         setTxns(all.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
       } catch (e) { console.error(e); }
