@@ -374,7 +374,8 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
 
 // Create a new, fully independent transaction linked to a parent — used for "related expenses"
 const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onClose, onCreated }) => {
-  const [date, setDate] = useState(parent.date || '');
+  const today = new Date().toISOString().split('T')[0];
+  const [date, setDate] = useState(today);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState('');
