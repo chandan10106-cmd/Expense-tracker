@@ -18,6 +18,11 @@ const UpdateDetails = ({ onSaved }) => {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState('');
+  const formatInputDate = (value) => {
+    if (!value) return '';
+    const [year, month, day] = String(value).split('-');
+    return day && month && year ? `${day}/${month}/${year}` : value;
+  };
   const [proofFiles, setProofFiles] = useState([]);
 
   const [isSplit, setIsSplit] = useState(false);
@@ -271,6 +276,7 @@ const UpdateDetails = ({ onSaved }) => {
           <div className="field">
             <label className="label">Date *</label>
             <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required />
+            <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>Selected date: {formatInputDate(date)}</div>
           </div>
           <div className="field">
             <label className="label">Amount (INR) * {isSplit && <span style={{ color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>(auto-syncs)</span>}</label>

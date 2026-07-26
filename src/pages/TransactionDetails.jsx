@@ -15,8 +15,13 @@ import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
 import * as XLSX from 'xlsx';
 
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
-const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
-const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
+const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return d; } };
+const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
+const formatInputDate = (value) => {
+  if (!value) return '';
+  const [year, month, day] = String(value).split('-');
+  return day && month && year ? `${day}/${month}/${year}` : value;
+};
 
 const getProofsArray = (t) => {
   if (Array.isArray(t.proofs) && t.proofs.length > 0) return t.proofs;
@@ -542,7 +547,9 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
               </label>
             </div>
             <div className="form-grid">
-              <div className="field"><label className="label">Date *</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
+              <div className="field"><label className="label">Date *</label><input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} required />
+                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>Selected date: {formatInputDate(date)}</div>
+              </div>
               <div className="field"><label className="label">Amount (INR) * {isSplit && <span style={{ color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>(auto-syncs)</span>}</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => handleAmountChange(e.target.value)} required={!isSplit} /></div>
             </div>
             {isSplit ? (
@@ -778,7 +785,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                         <button className="btn-action btn-icon-only" onClick={() => onLinkToFavorite(t)} title="Link to favorite transaction"><Link size={16} /></button>
                       )}
                       <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
-                      <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
+                      <button className="btn-action btn-edit btn-icon-only" onClick={() => onEdit(t)} title="Edit"><Pencil size={11} /></button>
                       {isAdmin && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
                       {parentFlag && (
                         <button className="btn-action btn-items" onClick={() => onToggleExpand(t.id)}>
@@ -869,7 +876,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
               <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
             </>
           )}
-          <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
+          <button className="btn-action btn-edit btn-icon-only" onClick={() => onEdit(t)} title="Edit"><Pencil size={11} /></button>
           {canDelete && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Delete" aria-label="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
         </div>
       </div>
@@ -957,7 +964,7 @@ const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, 
               <button className="btn-action btn-items" onClick={() => onAddChild(t)} title="Add related expense"><Plus size={11} /> Add</button>
             </>
           )}
-          <button className="btn-action btn-edit" onClick={() => onEdit(t)}><Pencil size={11} /> Edit</button>
+          <button className="btn-action btn-edit btn-icon-only" onClick={() => onEdit(t)} title="Edit"><Pencil size={11} /></button>
           {isAdmin && <button className="btn-action btn-delete btn-icon-only" onClick={() => onDelete(t)} disabled={deleting === t.id} title="Move to Recycle Bin" aria-label="Delete">{deleting === t.id ? '…' : <Trash2 size={13} />}</button>}
         </div>
       </td>

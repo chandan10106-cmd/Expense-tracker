@@ -202,6 +202,21 @@ h3 { font-size: 1.25rem; }
 .btn-action.btn-icon-only.star-toggle.active { color: var(--gold); transform: scale(1.2); animation: pulse-star 1.6s ease-in-out infinite; }
 .btn-action.btn-icon-only.star-toggle.active svg { width: 1.3rem; height: 1.3rem; }
 @keyframes pulse-star { 0%, 100% { transform: scale(1.2); } 50% { transform: scale(1.25); } }
+.combined-total-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(52, 78, 142, 0.12);
+  border: 1px solid rgba(52, 78, 142, 0.2);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  margin-top: 6px;
+}
 .btn-action.btn-items { background: var(--cream-2); color: var(--muted); border-color: var(--cream-3); }
 .btn-action.btn-items:hover { background: var(--cream-3); color: var(--ink); }
 .btn-approve { background: var(--green); color: white; }

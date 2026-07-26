@@ -6,8 +6,8 @@ import { useAuth } from '../lib/AuthContext';
 import { Check, X, ShieldCheck, ShieldOff, Clock, Crown, RefreshCw, Folder, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
 import BucketManager from './BucketManager';
 
-const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return d; } };
-const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
+const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return d; } };
+const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
 
 const RecycleBin = () => {
