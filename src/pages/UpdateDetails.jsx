@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import cache from '../lib/cache';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
@@ -228,6 +229,7 @@ const UpdateDetails = ({ onSaved }) => {
       setSplitAmounts({}); setSplitModes({}); setLastEditedField(null);
       setInvalidSplitUsers([]); setInvalidSplitModes([]);
       setSuccessInfo({ txnId });
+      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
     } catch (err) {
       setError(err.message || 'Failed to save transaction');
     } finally { setSaving(false); }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { collection, getDocs, addDoc } from 'firebase/firestore';
+import cache from '../lib/cache';
 import { db, auth } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
@@ -22,8 +23,10 @@ const BucketPicker = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const snap = await getDocs(collection(db, 'buckets'));
-        const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const all = await cache.fetchWithCache('buckets:all', async () => {
+          const snap = await getDocs(collection(db, 'buckets'));
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }, 1000 * 60 * 5);
         const visible = isPrimary ? all : all.filter(b => Array.isArray(b.members) && b.members.includes(user?.uid));
         setBuckets(visible.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || '')));
       } catch (e) { console.error(e); }

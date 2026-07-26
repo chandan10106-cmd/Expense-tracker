@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import cache from '../lib/cache';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { Plus, Trash2, Users, X, Folder } from 'lucide-react';
@@ -40,13 +41,15 @@ const MembersModal = ({ bucket, allUsers, onSave, onClose, saving }) => {
 };
 
 const BucketManager = () => {
-  const { user, profile } = useAuth();
+  const { user, profile, isPrimary } = useAuth();
   const [buckets, setBuckets] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [editingMembers, setEditingMembers] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [manageUserMembership, setManageUserMembership] = useState(null);
+  const [savingUserMembership, setSavingUserMembership] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newColor, setNewColor] = useState(BUCKET_COLORS[0]);
@@ -54,9 +57,18 @@ const BucketManager = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [bsnap, usnap] = await Promise.all([getDocs(collection(db, 'buckets')), getDocs(collection(db, 'users'))]);
-        setBuckets(bsnap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setUsers(usnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.status === 'approved' || u.isPrimary));
+        const [allBuckets, allUsers] = await Promise.all([
+          cache.fetchWithCache('buckets:all', async () => {
+            const snap = await getDocs(collection(db, 'buckets'));
+            return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          }, 1000 * 60 * 5),
+          cache.fetchWithCache('users:all', async () => {
+            const snap = await getDocs(collection(db, 'users'));
+            return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          }, 1000 * 60 * 5)
+        ]);
+        setBuckets(allBuckets);
+        setUsers(allUsers.filter(u => u.status === 'approved' || u.isPrimary));
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     };
@@ -96,7 +108,12 @@ const BucketManager = () => {
           <span className="section-eyebrow">Workspace management</span>
           <h2>Buckets</h2>
         </div>
-        <button className="btn btn-primary" onClick={() => setCreating(true)}><Plus size={14} /> New Bucket</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" onClick={() => setCreating(true)}><Plus size={14} /> New Bucket</button>
+          {isPrimary && (
+            <button className="btn btn-ghost" onClick={() => setManageUserMembership({})} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Users size={14} /> Manage Memberships</button>
+          )}
+        </div>
       </div>
 
       {creating && (
@@ -147,6 +164,80 @@ const BucketManager = () => {
         </div>
       )}
       {editingMembers && <MembersModal bucket={editingMembers} allUsers={users} onSave={(m) => handleUpdateMembers(editingMembers, m)} onClose={() => setEditingMembers(null)} saving={saving} />}
+      {manageUserMembership && (
+        <UserManageModal
+          user={manageUserMembership.user || null}
+          users={users}
+          buckets={buckets}
+          onClose={() => setManageUserMembership(null)}
+          onSave={async (userId, selected) => {
+            setSavingUserMembership(true);
+            try {
+              await Promise.all(buckets.map(async (b) => {
+                const ref = doc(db, 'buckets', b.id);
+                const has = Array.isArray(b.members) && b.members.includes(userId);
+                const should = selected.includes(b.id);
+                if (should && !has) await updateDoc(ref, { members: arrayUnion(userId) });
+                if (!should && has) await updateDoc(ref, { members: arrayRemove(userId) });
+              }));
+              // reload buckets
+              const bsnap = await getDocs(collection(db, 'buckets'));
+              setBuckets(bsnap.docs.map(d => ({ id: d.id, ...d.data() })));
+              setManageUserMembership(null);
+            } catch (e) { alert('Failed: ' + e.message); }
+            finally { setSavingUserMembership(false); }
+          }} saving={savingUserMembership} />
+      )}
+    </div>
+  );
+};
+
+const UserManageModal = ({ user, users, buckets, onSave, onClose, saving }) => {
+  const [selectedUser, setSelectedUser] = useState(user ? user.id : (users[0] ? users[0].id : null));
+  const [selected, setSelected] = useState([]);
+
+  useEffect(() => {
+    if (!selectedUser) return;
+    const uBuckets = buckets.filter(b => Array.isArray(b.members) && b.members.includes(selectedUser)).map(b => b.id);
+    setSelected(uBuckets);
+  }, [selectedUser, buckets]);
+
+  const toggle = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 560 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <div style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 600 }}>Manage User Memberships</div>
+            <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>Select a user and toggle buckets to add/remove them.</div>
+          </div>
+          <button className="btn btn-ghost" onClick={onClose} style={{ padding: '8px 12px' }}><X size={14} /></button>
+        </div>
+        <div style={{ padding: '16px 20px' }}>
+          <div style={{ marginBottom: 12 }}>
+            <label className="label">User</label>
+            <select value={selectedUser || ''} onChange={e => setSelectedUser(e.target.value)} style={{ width: '100%', padding: '10px 12px', borderRadius: 6, border: '1px solid var(--cream-3)' }}>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+            </select>
+          </div>
+          <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+            {buckets.map(b => (
+              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, marginBottom: 6, background: selected.includes(b.id) ? 'rgba(74,107,58,0.08)' : 'var(--cream-2)', border: `1px solid ${selected.includes(b.id) ? 'var(--green)' : 'var(--cream-3)'}`, cursor: 'pointer' }} onClick={() => toggle(b.id)}>
+                <input type="checkbox" checked={selected.includes(b.id)} onChange={() => toggle(b.id)} style={{ width: 16, height: 16 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700 }}>{b.name}</div>
+                  {b.description && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{b.description}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--cream-3)', display: 'flex', gap: 10 }}>
+          <button className="btn btn-ghost" onClick={onClose} style={{ flex: 1 }}>Cancel</button>
+          <button className="btn btn-primary" onClick={() => onSave(selectedUser, selected)} disabled={saving} style={{ flex: 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+        </div>
+      </div>
     </div>
   );
 };

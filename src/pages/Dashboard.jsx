@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
+import cache from '../lib/cache';
 import { db } from '../lib/firebase';
 import { useBucket } from '../lib/BucketContext';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
@@ -27,12 +28,14 @@ const Dashboard = ({ onAddEntry }) => {
     const load = async () => {
       setLoading(true);
       try {
-        const snap = await getDocs(collection(db, 'transactions'));
-        const all = snap.docs
-          .map(d => ({ id: d.id, ...d.data() }))
-          .filter(t => t.bucketId === activeBucket.id)
-          .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-        setTxns(all);
+        if (!activeBucket || !activeBucket.id) { setTxns([]); return; }
+        const key = `txns:bucket:${activeBucket.id}`;
+        const all = await cache.fetchWithCache(key, async () => {
+          const q = query(collection(db, 'transactions'), where('bucketId', '==', activeBucket.id), orderBy('date', 'desc'));
+          const snap = await getDocs(q);
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }, 1000 * 30);
+        setTxns(all.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     };

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, Fragment } from 'react';
-import { collection, getDocs, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, addDoc, query, where, orderBy } from 'firebase/firestore';
+import cache from '../lib/cache';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
@@ -1089,11 +1090,13 @@ const TransactionDetails = ({ onAddEntry }) => {
   const load = async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'transactions'));
-      const all = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(t => t.bucketId === activeBucket.id && !t.deleted)
-        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      if (!activeBucket || !activeBucket.id) { setTxns([]); setApprovedUsers([]); return; }
+      const key = `txns:bucket:${activeBucket.id}`;
+      const all = await cache.fetchWithCache(key, async () => {
+        const q = query(collection(db, 'transactions'), where('bucketId', '==', activeBucket.id), where('deleted', '==', false), orderBy('createdAt', 'desc'));
+        const snap = await getDocs(q);
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }, 1000 * 30);
       setTxns(all);
       const usnap = await getDocs(collection(db, 'users'));
       setApprovedUsers(usnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.status === 'approved' || u.isPrimary));
@@ -1186,6 +1189,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       });
       const nextTxns = txns.filter(t => t.id !== txn.id);
       setTxns(nextTxns);
+      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
       if (txn.isChild && txn.parentId) await recomputeParentTotals(txn.parentId, nextTxns);
     } catch (e) { alert('Failed: ' + e.message); }
     finally { setDeleting(null); }
@@ -1194,6 +1198,7 @@ const TransactionDetails = ({ onAddEntry }) => {
   const handleSaved = (updated) => {
     const nextTxns = txns.map(t => t.id === updated.id ? updated : t);
     setTxns(nextTxns);
+    try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
     setEditing(null); setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3500);
     if (updated.isChild && updated.parentId) recomputeParentTotals(updated.parentId, nextTxns);
@@ -1203,6 +1208,7 @@ const TransactionDetails = ({ onAddEntry }) => {
   const handleChildAdded = (newChild) => {
     const nextTxns = [newChild, ...txns];
     setTxns(nextTxns);
+    try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
     setAddChildFor(null);
     recomputeParentTotals(newChild.parentId, nextTxns);
     setExpandedIds(prev => new Set(prev).add(newChild.parentId));
@@ -1218,6 +1224,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       };
       await updateDoc(doc(db, 'transactions', txn.id), updates);
       setTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...updates } : t));
+      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
     } catch (e) {
       alert('Failed to update favorite: ' + (e.message || e));
     }
@@ -1234,6 +1241,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       const nextTxns = txns.map(t => t.id === txn.id ? { ...t, isChild: true, parentId: parent.id, parentTxnId: parent.txnId } : t);
       setTxns(nextTxns);
       setLinkToFavoriteFor(null);
+      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
       recomputeParentTotals(parent.id, nextTxns);
     } catch (e) {
       alert('Failed to link transaction: ' + (e.message || e));

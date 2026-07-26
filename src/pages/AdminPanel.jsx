@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { collection, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import cache from '../lib/cache';
 import { db, isPrimaryAdmin } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { Check, X, ShieldCheck, ShieldOff, Clock, Crown, RefreshCw, Folder, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
@@ -116,17 +117,29 @@ const RecycleBin = () => {
 
 const AdminPanel = ({ onPendingChange }) => {
   const { user: currentUser, isPrimary } = useAuth();
+  const [buckets, setBuckets] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(null);
+  const [editingUserBuckets, setEditingUserBuckets] = useState(null);
+  const [savingBuckets, setSavingBuckets] = useState(false);
   const [filter, setFilter] = useState('pending');
   const [adminTab, setAdminTab] = useState('users');
 
   const load = async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'users'));
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const [all, allBuckets] = await Promise.all([
+        cache.fetchWithCache('users:all', async () => {
+          const snap = await getDocs(collection(db, 'users'));
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }, 1000 * 60 * 5),
+        cache.fetchWithCache('buckets:all', async () => {
+          const snap = await getDocs(collection(db, 'buckets'));
+          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }, 1000 * 60 * 5)
+      ]);
+      setBuckets(allBuckets);
       all.sort((a, b) => {
         const statusOrder = { pending: 0, approved: 1, rejected: 2 };
         const sa = statusOrder[a.status || 'pending'] ?? 1;
@@ -260,6 +273,16 @@ const AdminPanel = ({ onPendingChange }) => {
                         </div>
                       </div>
                     </div>
+                    {/* show buckets and membership management for primary admins */}
+                    <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {buckets.filter(b => Array.isArray(b.members) && b.members.includes(u.id)).map(b => (
+                        <span key={b.id} style={{ fontSize: 11, padding: '4px 8px', background: 'var(--cream-2)', borderRadius: 10, border: '1px solid var(--cream-3)', fontWeight: 700 }}>{b.name}</span>
+                      ))}
+                      {isPrimary && (
+                        <button className="btn btn-ghost" onClick={() => setEditingUserBuckets(u)} style={{ padding: '6px 10px', marginLeft: 6 }}>Edit Buckets</button>
+                      )}
+                    </div>
+
                     {!primary && !isMe && (
                       <div className="user-card-actions">
                         {status === 'pending' && (
@@ -299,6 +322,60 @@ const AdminPanel = ({ onPendingChange }) => {
           )}
         </>
       )}
+      {editingUserBuckets && (
+        <UserBucketsModal user={editingUserBuckets} buckets={buckets} onClose={() => setEditingUserBuckets(null)} onSave={async (selected) => {
+          setSavingBuckets(true);
+          try {
+            // For each bucket, add or remove user id
+            await Promise.all(buckets.map(async (b) => {
+              const ref = doc(db, 'buckets', b.id);
+              const has = Array.isArray(b.members) && b.members.includes(editingUserBuckets.id);
+              const should = selected.includes(b.id);
+              if (should && !has) await updateDoc(ref, { members: arrayUnion(editingUserBuckets.id) });
+              if (!should && has) await updateDoc(ref, { members: arrayRemove(editingUserBuckets.id) });
+            }));
+            // reload buckets
+            const bsnap = await getDocs(collection(db, 'buckets'));
+            setBuckets(bsnap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setEditingUserBuckets(null);
+          } catch (e) { alert('Failed: ' + e.message); }
+          finally { setSavingBuckets(false); }
+        }} saving={savingBuckets} />
+      )}
+    </div>
+  );
+};
+
+const UserBucketsModal = ({ user, buckets, onSave, onClose, saving }) => {
+  const [selected, setSelected] = useState(Array.isArray(buckets) ? buckets.filter(b => Array.isArray(b.members) && b.members.includes(user.id)).map(b => b.id) : []);
+  const toggle = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  useEffect(() => { setSelected(Array.isArray(buckets) ? buckets.filter(b => Array.isArray(b.members) && b.members.includes(user.id)).map(b => b.id) : []); }, [buckets, user]);
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <div style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 600 }}>Manage Buckets for {user.name || user.email}</div>
+            <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 2 }}>Toggle buckets to grant or remove access</div>
+          </div>
+          <button className="btn btn-ghost" onClick={onClose} style={{ padding: '8px 12px' }}><X size={14} /></button>
+        </div>
+        <div style={{ padding: '16px 20px', maxHeight: 360, overflowY: 'auto' }}>
+          {buckets.map(b => (
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 6, marginBottom: 6, background: selected.includes(b.id) ? 'rgba(184,69,31,0.06)' : 'var(--cream-2)', border: `1px solid ${selected.includes(b.id) ? 'rgba(184,69,31,0.12)' : 'var(--cream-3)'}`, cursor: 'pointer' }} onClick={() => toggle(b.id)}>
+              <input type="checkbox" checked={selected.includes(b.id)} onChange={() => toggle(b.id)} style={{ width: 16, height: 16 }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{b.name}</div>
+                {b.description && <div style={{ fontSize: 12, color: 'var(--muted)' }}>{b.description}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--cream-3)', display: 'flex', gap: 10 }}>
+          <button className="btn btn-ghost" onClick={onClose} style={{ flex: 1 }}>Cancel</button>
+          <button className="btn btn-primary" onClick={() => onSave(selected)} disabled={saving} style={{ flex: 1 }}>{saving ? 'Saving…' : 'Save Memberships'}</button>
+        </div>
+      </div>
     </div>
   );
 };
