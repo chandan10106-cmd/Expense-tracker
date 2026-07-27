@@ -207,16 +207,21 @@ h3 { font-size: 1.25rem; }
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 5px 10px;
+  padding: 6px 12px;
   border-radius: 999px;
   background: rgba(52, 78, 142, 0.12);
   border: 1px solid rgba(52, 78, 142, 0.2);
   color: var(--ink);
-  font-size: 12px;
-  font-weight: 700;
+  font-family: 'Fraunces', serif;
+  font-size: 19px;
+  font-weight: 800;
   letter-spacing: 0.01em;
   margin-top: 6px;
 }
+.btn-action.btn-icon-only.pin-toggle { border: none; background: rgba(255,255,255,0.18); padding: 8px; min-width: auto; color: var(--muted); border-radius: 50%; }
+.btn-action.btn-icon-only.pin-toggle:hover { color: var(--ink-2); background: rgba(255,255,255,0.28); }
+.btn-action.btn-icon-only.pin-toggle svg { display: block; width: 1rem; height: 1rem; }
+.btn-action.btn-icon-only.pin-toggle.active { color: var(--accent); transform: rotate(-15deg); }
 .btn-action.btn-items { background: var(--cream-2); color: var(--muted); border-color: var(--cream-3); }
 .btn-action.btn-items:hover { background: var(--cream-3); color: var(--ink); }
 .btn-approve { background: var(--green); color: white; }

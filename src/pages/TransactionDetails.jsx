@@ -9,7 +9,7 @@ import { PAYMENT_MODES, getNextTxnId } from '../lib/txnUtils';
 import {
   Eye, Download, X, Search, Trash2, Pencil, Upload, CheckCircle2,
   ChevronLeft, ChevronRight, ChevronDown, Filter, RotateCcw, Info, Plus,
-  Link, Star, StarOff, List, Clock, FileSpreadsheet, FileText
+  Link, Star, StarOff, List, Clock, FileSpreadsheet, FileText, Pin, PinOff
 } from 'lucide-react';
 import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
 import * as XLSX from 'xlsx';
@@ -176,7 +176,7 @@ const DetailRow = ({ label, value, mono }) => (
   </div>
 );
 
-const InfoModal = ({ txn, childrenList, onClose, onViewProofs }) => {
+const InfoModal = ({ txn, childrenList, onClose, onViewProofs, onTogglePin }) => {
   const proofs = getProofsArray(txn);
   const isSplitTxn = txn.isSplit && Array.isArray(txn.splitDetails) && txn.splitDetails.length > 0;
   const parentFlag = (childrenList && childrenList.length > 0) || (txn.childCount || 0) > 0;
@@ -188,7 +188,14 @@ const InfoModal = ({ txn, childrenList, onClose, onViewProofs }) => {
             <div style={{ fontFamily: 'Fraunces, serif', fontSize: 18, fontWeight: 600 }}>Transaction Details</div>
             <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: 'var(--accent)', marginTop: 2, fontWeight: 600 }}>{txn.txnId || '—'}</div>
           </div>
-          <button className="btn btn-ghost" onClick={onClose} style={{ padding: '8px 12px' }}><X size={14} /></button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {!txn.isChild && onTogglePin && (
+              <button className={`btn-action btn-icon-only pin-toggle ${txn.isPinned ? 'active' : ''}`} onClick={() => onTogglePin(txn)} title={txn.isPinned ? 'Unpin from top' : 'Pin to top'}>
+                {txn.isPinned ? <Pin size={16} /> : <PinOff size={14} />}
+              </button>
+            )}
+            <button className="btn btn-ghost" onClick={onClose} style={{ padding: '8px 12px' }}><X size={14} /></button>
+          </div>
         </div>
         <div className="info-modal-body">
           <DetailRow label="Transaction ID" value={txn.txnId} mono />
@@ -197,7 +204,7 @@ const InfoModal = ({ txn, childrenList, onClose, onViewProofs }) => {
           <DetailRow label="Date" value={formatDate(txn.date)} />
           <DetailRow label="Amount" value={`₹${formatINR(txn.amount)}`} />
           {parentFlag && <DetailRow label="Combined total" value={
-            <span className="combined-total-badge" style={{ fontSize: 13, padding: '3px 10px' }}>₹{formatINR(txn.combinedTotal)}</span>
+            <span className="combined-total-badge">₹{formatINR(txn.combinedTotal)}</span>
           } />}
           {parentFlag && <DetailRow label="Related expenses" value={`${txn.childCount} linked`} />}
           {isSplitTxn ? (
@@ -764,7 +771,10 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                   <div className="timeline-item-card">
                     <div className="timeline-item-top">
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>{t.txnId || ''}</div>
+                        <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {t.isPinned && <Pin size={11} />}
+                          {t.txnId || ''}
+                        </div>
                         <div style={{ fontSize: 12, color: 'var(--muted)' }}>{formatDate(t.date)}</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
@@ -848,7 +858,10 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
     <div className="txn-card">
       <div className="txn-card-row">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <div className="txn-card-id">{t.txnId || ''}</div>
+          <div className="txn-card-id" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {t.isPinned && <Pin size={12} style={{ color: 'var(--accent)' }} />}
+            {t.txnId || ''}
+          </div>
           <div className="txn-card-date">{formatDate(t.date)}</div>
         </div>
         <div style={{ textAlign: 'right' }}>
@@ -937,6 +950,7 @@ const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, 
             </button>
           )}
           {isChildRow && <span style={{ color: 'var(--muted)' }}>↳</span>}
+          {!isChildRow && t.isPinned && <Pin size={12} style={{ color: 'var(--accent)' }} />}
           {t.txnId || '—'}
         </div>
       </td>
@@ -1132,6 +1146,11 @@ const TransactionDetails = ({ onAddEntry }) => {
   const favoriteParents = useMemo(() => topLevel.filter(t => t.isFavorite), [topLevel]);
   const sortedTopLevel = useMemo(() => {
     return [...topLevel].sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      if (a.isPinned && b.isPinned) {
+        return (b.pinnedAt || '').localeCompare(a.pinnedAt || '') || (b.date || '').localeCompare(a.date || '');
+      }
       if (a.isFavorite && !b.isFavorite) return -1;
       if (!a.isFavorite && b.isFavorite) return 1;
       if (a.isFavorite && b.isFavorite) {
@@ -1262,6 +1281,20 @@ const TransactionDetails = ({ onAddEntry }) => {
     }
   };
 
+  const togglePin = async (txn) => {
+    try {
+      const updates = {
+        isPinned: !txn.isPinned,
+        pinnedAt: !txn.isPinned ? new Date().toISOString() : null
+      };
+      await updateDoc(doc(db, 'transactions', txn.id), updates);
+      setTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...updates } : t));
+      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
+    } catch (e) {
+      alert('Failed to update pin: ' + (e.message || e));
+    }
+  };
+
   const linkTxnToFavorite = async (txn, parent) => {
     try {
       await updateDoc(doc(db, 'transactions', txn.id), {
@@ -1373,7 +1406,7 @@ const TransactionDetails = ({ onAddEntry }) => {
 
       {viewing && <ProofViewer txn={viewing} onClose={() => setViewing(null)} />}
       {editing && <EditModal txn={editing} approvedUsers={approvedUsers} onClose={() => setEditing(null)} onSaved={handleSaved} childrenList={getChildrenOf(txns, editing.id)} />}
-      {info && <InfoModal txn={info} childrenList={getChildrenOf(txns, info.id)} onClose={() => setInfo(null)} onViewProofs={t => { setInfo(null); setViewing(t); }} />}
+      {info && <InfoModal txn={info} childrenList={getChildrenOf(txns, info.id)} onClose={() => setInfo(null)} onViewProofs={t => { setInfo(null); setViewing(t); }} onTogglePin={async t => { await togglePin(t); setInfo(prev => prev && prev.id === t.id ? { ...prev, isPinned: !t.isPinned } : prev); }} />}
       {addChildFor && <AddChildModal parent={addChildFor} approvedUsers={approvedUsers} user={user} profile={profile} activeBucket={activeBucket} onClose={() => setAddChildFor(null)} onCreated={handleChildAdded} />}
       {linkToFavoriteFor && <LinkToFavoriteModal txn={linkToFavoriteFor} favoriteTxns={favoriteParents} onClose={() => setLinkToFavoriteFor(null)} onSelect={parent => linkTxnToFavorite(linkToFavoriteFor, parent)} />}
       {showExport && <ExportModal onClose={() => setShowExport(false)} filtered={filteredWithChildren} allTxns={txns} bucketName={activeBucket.name} />}
