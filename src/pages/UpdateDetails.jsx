@@ -180,8 +180,8 @@ const UpdateDetails = ({ onSaved }) => {
   const validate = () => {
     if (!date) return 'Date is required';
     if (!isSplit) {
-      if (!amount || !/^\d+$/.test(String(amount))) return 'Amount must be a positive integer';
-      if (parseInt(amount) <= 0) return 'Amount must be greater than zero';
+      if (!amount || !/^[\d,]+$/.test(String(amount))) return 'Amount must be a positive integer';
+      if (parseToNumber(amount) <= 0) return 'Amount must be greater than zero';
     }
     if (!description.trim()) return 'Description is required';
     if (description.length > 300) return 'Description must be 300 characters or fewer';

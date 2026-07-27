@@ -1175,7 +1175,9 @@ const TransactionDetails = ({ onAddEntry }) => {
   const filtered = useMemo(() => sortedTopLevel.filter(t => {
     if (search) {
       const s = search.toLowerCase();
-      if (!((t.txnId || '').toLowerCase().includes(s) || (formatPaidBy(t) || '').toLowerCase().includes(s) || (getDescription(t) || '').toLowerCase().includes(s) || (formatMode(t) || '').toLowerCase().includes(s) || (t.date || '').includes(s) || String(t.amount || '').includes(s))) return false;
+      const matchesSelf = (t.txnId || '').toLowerCase().includes(s) || (formatPaidBy(t) || '').toLowerCase().includes(s) || (getDescription(t) || '').toLowerCase().includes(s) || (formatMode(t) || '').toLowerCase().includes(s) || (t.date || '').includes(s) || String(t.amount || '').includes(s);
+      const matchesChild = getChildrenOf(txns, t.id).some(c => (c.txnId || '').toLowerCase().includes(s) || (formatPaidBy(c) || '').toLowerCase().includes(s) || (getDescription(c) || '').toLowerCase().includes(s) || (formatMode(c) || '').toLowerCase().includes(s) || (c.date || '').includes(s) || String(c.amount || '').includes(s));
+      if (!matchesSelf && !matchesChild) return false;
     }
     if (filters.dateFrom && t.date < filters.dateFrom) return false;
     if (filters.dateTo && t.date > filters.dateTo) return false;
@@ -1190,7 +1192,7 @@ const TransactionDetails = ({ onAddEntry }) => {
     if (filters.amountMin !== '' && (t.amount || 0) < parseInt(filters.amountMin)) return false;
     if (filters.amountMax !== '' && (t.amount || 0) > parseInt(filters.amountMax)) return false;
     return true;
-  }), [sortedTopLevel, search, filters]);
+  }), [sortedTopLevel, search, filters, txns]);
 
   const filteredTotal = useMemo(() => filtered.reduce((s, t) => s + (t.amount || 0), 0), [filtered]);
 
