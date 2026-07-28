@@ -104,7 +104,7 @@ const UpdateDetails = ({ onSaved }) => {
     if (checked) {
       const initialSelected = user?.uid ? [user.uid] : [];
       setSelectedUsers(initialSelected);
-      if (amount && initialSelected.length > 0) setSplitAmounts(prev => ({ ...prev, [initialSelected[0]]: parseInt(amount) }));
+      if (amount && initialSelected.length > 0) setSplitAmounts(prev => ({ ...prev, [initialSelected[0]]: parseToNumber(amount) }));
       setLastEditedField(amount ? 'total' : null);
     } else {
       setSelectedUsers([]); setLastEditedField(null);
@@ -118,7 +118,7 @@ const UpdateDetails = ({ onSaved }) => {
     setSelectedUsers(newSelected);
     if (isCurrentlySelected) { setInvalidSplitUsers(prev => prev.filter(id => id !== uid)); setInvalidSplitModes(prev => prev.filter(id => id !== uid)); }
     if (!isCurrentlySelected && lastEditedField === 'total' && amount && newSelected.length > 0) {
-      const total = parseInt(amount);
+      const total = parseToNumber(amount);
       const perPerson = Math.floor(total / newSelected.length);
       const remainder = total - (perPerson * newSelected.length);
       const newAmounts = { ...splitAmounts };
@@ -139,7 +139,7 @@ const UpdateDetails = ({ onSaved }) => {
   };
 
   const splitTotal = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
-  const splitValid = isSplit ? (selectedUsers.length > 0 && splitTotal > 0 && (!amount || splitTotal === parseInt(amount))) : true;
+  const splitValid = isSplit ? (selectedUsers.length > 0 && splitTotal > 0 && (!amount || splitTotal === parseToNumber(amount))) : true;
   const allModesSelected = isSplit ? selectedUsers.every(uid => splitModes[uid]) : true;
 
   const handleFileChange = (e) => {
@@ -192,7 +192,7 @@ const UpdateDetails = ({ onSaved }) => {
       if (splitTotal <= 0) return 'Enter at least one split amount';
       const emptyAmounts = selectedUsers.filter(uid => !splitAmounts[uid] || parseInt(splitAmounts[uid]) <= 0);
       if (emptyAmounts.length > 0) return `Enter an amount for: ${emptyAmounts.map(uid => approvedUsers.find(u => u.id === uid)?.name || uid).join(', ')}`;
-      if (amount && splitTotal !== parseInt(amount)) return `Split amounts (₹${splitTotal}) must add up to ₹${amount}`;
+      if (amount && splitTotal !== parseToNumber(amount)) return `Split amounts (₹${splitTotal}) must add up to ₹${amount}`;
       const emptyModes = selectedUsers.filter(uid => !splitModes[uid]);
       if (emptyModes.length > 0) return `Select a payment mode for: ${emptyModes.map(uid => approvedUsers.find(u => u.id === uid)?.name || uid).join(', ')}`;
     }
@@ -206,7 +206,7 @@ const UpdateDetails = ({ onSaved }) => {
       let proofs = [];
       if (proofFiles.length > 0) proofs = await processProofFiles(proofFiles);
       const { sequence, id: txnId } = await getNextTxnId();
-      const finalAmount = isSplit ? splitTotal : parseInt(amount);
+      const finalAmount = isSplit ? splitTotal : parseToNumber(amount);
 
       const baseData = {
         txnId, txnSequence: sequence,
@@ -302,7 +302,7 @@ const UpdateDetails = ({ onSaved }) => {
             <div className="split-header">
               <div className="label" style={{ marginBottom: 8 }}>Select people, amount, and mode for each</div>
               <div style={{ fontSize: 12, color: splitValid ? 'var(--green)' : 'var(--error)', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>
-                Split total: ₹{splitTotal}{amount && splitTotal !== parseInt(amount) && ` (need ₹${amount})`}
+                Split total: ₹{splitTotal}{amount && splitTotal !== parseToNumber(amount) && ` (need ₹${amount})`}
               </div>
             </div>
             <div className="split-user-list">
