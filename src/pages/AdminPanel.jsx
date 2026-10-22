@@ -169,6 +169,10 @@ const AdminPanel = ({ onPendingChange }) => {
       const p = updateDoc(doc(db, 'users', uid), updates);
       await p;
       setUsers(prev => prev.map(u => u.id === uid ? { ...u, ...updates } : u));
+      // Admin changes here (approve/reject/promote) must be visible immediately in the
+      // Add Entry / Transactions tabs' Paid By & Split lists, not after their 5-min cache expires.
+      cache.invalidateCache('users:all');
+      cache.invalidateCache('users:all-approved');
       const pending = users.filter(u => u.id !== uid ? (u.status || 'pending') === 'pending' : updates.status === 'pending').length;
       if (onPendingChange) onPendingChange(pending);
       return true;
@@ -337,6 +341,7 @@ const AdminPanel = ({ onPendingChange }) => {
             // reload buckets
             const bsnap = await getDocs(collection(db, 'buckets'));
             setBuckets(bsnap.docs.map(d => ({ id: d.id, ...d.data() })));
+            cache.invalidateCache('buckets:all');
             setEditingUserBuckets(null);
           } catch (e) { alert('Failed: ' + e.message); }
           finally { setSavingBuckets(false); }

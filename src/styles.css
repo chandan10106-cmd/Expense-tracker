@@ -27,6 +27,7 @@ h1 { font-size: 2.5rem; line-height: 1.1; }
 h2 { font-size: 1.75rem; line-height: 1.2; }
 h3 { font-size: 1.25rem; }
 .mono { font-family: 'JetBrains Mono', monospace; }
+.search-highlight { background: rgba(201,164,73,0.45); color: var(--ink); border-radius: 2px; padding: 0 1px; font-weight: 700; }
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,600;1,400;1,600&family=Manrope:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
 .desktop-only { display: block; }
 .mobile-only { display: none !important; }

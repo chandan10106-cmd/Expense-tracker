@@ -3,6 +3,7 @@ import { signOut } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
+import { TransactionsProvider } from '../lib/TransactionsContext';
 import { collection, getDocs } from 'firebase/firestore';
 import UpdateDetails from './UpdateDetails';
 import Dashboard from './Dashboard';
@@ -86,9 +87,14 @@ const AppHome = () => {
       </nav>
 
       <main className="app-content">
-        {tab === 'dashboard' && <Dashboard onAddEntry={() => setTab('update')} />}
-        {tab === 'update' && <UpdateDetails onSaved={() => setTab('transactions')} />}
-        {tab === 'transactions' && <TransactionDetails onAddEntry={() => setTab('update')} />}
+        {/* Dashboard / Add Entry / Transactions share one data provider and stay mounted
+            (just hidden) once visited, so switching between them is instant instead of
+            re-fetching and re-rendering a fresh loading state every time. */}
+        <TransactionsProvider>
+          <div hidden={tab !== 'dashboard'}><Dashboard onAddEntry={() => setTab('update')} /></div>
+          <div hidden={tab !== 'update'}><UpdateDetails onSaved={() => setTab('transactions')} /></div>
+          <div hidden={tab !== 'transactions'}><TransactionDetails onAddEntry={() => setTab('update')} /></div>
+        </TransactionsProvider>
         {tab === 'admin' && isAdmin && <AdminPanel onPendingChange={setPendingCount} />}
       </main>
 

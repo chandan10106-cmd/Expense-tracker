@@ -1,9 +1,12 @@
 import { useEffect, useState, useMemo, useRef, Fragment } from 'react';
-import { collection, getDocs, doc, updateDoc, addDoc, query, where, orderBy } from 'firebase/firestore';
-import cache from '../lib/cache';
+import { collection, doc, updateDoc, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
+import { useTransactions } from '../lib/TransactionsContext';
+import { useSplitPayment } from '../lib/useSplitPayment';
+import SplitPanel from '../components/SplitPanel';
+import PaidBySelect from '../components/PaidBySelect';
 import { downloadDataUrl, processProofFiles, MAX_IMAGES_PER_TXN } from '../lib/fileUtils';
 import { PAYMENT_MODES, getNextTxnId } from '../lib/txnUtils';
 import {
@@ -13,6 +16,25 @@ import {
 } from 'lucide-react';
 import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
 import * as XLSX from 'xlsx';
+
+// Escapes regex special characters so a raw search string can be used inside a RegExp.
+const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Wraps every case-insensitive occurrence of `query` inside `text` in a <mark>,
+// so a match is visually obvious wherever it shows up in the table/timeline/cards.
+const Highlight = ({ text, query }) => {
+  const str = text === null || text === undefined ? '' : String(text);
+  const q = (query || '').trim();
+  if (!q || !str) return <>{str}</>;
+  const parts = str.split(new RegExp(`(${escapeRegExp(q)})`, 'ig'));
+  return (
+    <>
+      {parts.map((part, i) => part.toLowerCase() === q.toLowerCase()
+        ? <mark key={i} className="search-highlight">{part}</mark>
+        : part)}
+    </>
+  );
+};
 
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
 const formatDate = (d) => {
@@ -54,6 +76,31 @@ const getChildrenOf = (list, parentId) => {
   }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 };
 
+// A single transaction (parent or child) matches a search term if the term shows
+// up in any of its searchable fields — used both to filter the list and to decide
+// which children should surface when only a child (not its parent) matches.
+const txnMatchesSearch = (t, searchLower) => {
+  if (!searchLower) return true;
+  return (
+    (t.txnId || '').toLowerCase().includes(searchLower) ||
+    (formatPaidBy(t) || '').toLowerCase().includes(searchLower) ||
+    (getDescription(t) || '').toLowerCase().includes(searchLower) ||
+    (formatMode(t) || '').toLowerCase().includes(searchLower) ||
+    (t.date || '').includes(searchLower) ||
+    String(t.amount || '').includes(searchLower)
+  );
+};
+
+// Children to actually render under an expanded parent. Outside of a search,
+// that's every child; while searching, only the children that themselves match
+// the term — so expanding a parent that only matched because of one child
+// doesn't dump every unrelated sibling into view too.
+const getVisibleChildren = (allTxns, parentId, searchLower) => {
+  const children = getChildrenOf(allTxns, parentId);
+  if (!searchLower) return children;
+  return children.filter(c => txnMatchesSearch(c, searchLower));
+};
+
 const formatPaidBy = (t) => {
   if (t.isSplit && Array.isArray(t.splitDetails) && t.splitDetails.length > 0) return t.splitDetails.map(s => s.name).join(', ');
   return t.paidByName || '—';
@@ -71,15 +118,18 @@ const getDescription = (t) => t.description || t.paidTo || '';
 
 
 const READ_MORE_THRESHOLD = 60;
-const DescriptionCell = ({ text }) => {
+const DescriptionCell = ({ text, query }) => {
   const [expanded, setExpanded] = useState(false);
   if (!text) return null;
-  if (text.length <= READ_MORE_THRESHOLD) return <div style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{text}</div>;
+  // While searching, a match might sit past the truncation point — auto-expand
+  // so the highlighted term is actually visible instead of hidden behind "Read more".
+  const forceExpanded = expanded || (query && text.toLowerCase().includes(query.trim().toLowerCase()) && text.length > READ_MORE_THRESHOLD);
+  if (text.length <= READ_MORE_THRESHOLD) return <div style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}><Highlight text={text} query={query} /></div>;
   return (
     <div style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>
-      {expanded ? text : text.slice(0, READ_MORE_THRESHOLD) + '…'}{' '}
+      <Highlight text={forceExpanded ? text : text.slice(0, READ_MORE_THRESHOLD) + '…'} query={query} />{' '}
       <button type="button" onClick={e => { e.stopPropagation(); setExpanded(v => !v); }} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0, textDecoration: 'underline', textUnderlineOffset: 2 }}>
-        {expanded ? 'Read less' : 'Read more'}
+        {forceExpanded ? 'Read less' : 'Read more'}
       </button>
     </div>
   );
@@ -256,6 +306,7 @@ const InfoModal = ({ txn, childrenList, onClose, onViewProofs, onTogglePin }) =>
 };
 
 const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
+  const { user } = useAuth();
   const existingProofs = getProofsArray(txn);
   const isSplitTxn = txn.isSplit && Array.isArray(txn.splitDetails);
   const [date, setDate] = useState(txn.date || '');
@@ -317,13 +368,11 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
             {isSplitTxn && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ Split transactions: per-user contributions are locked.</div>}
             {txn.isChild && txn.parentTxnId && <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This is a related expense under <strong>{txn.parentTxnId}</strong>. Changing its amount will update that transaction's combined total.</div>}
             {!isSplitTxn && (
-              <div className="field">
-                <label className="label">Paid By</label>
-                <select className="select" value={paidByUid} onChange={e => setPaidByUid(e.target.value)}>
-                  {approvedUsers.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
-                  {!approvedUsers.some(u => u.id === paidByUid) && paidByUid && <option value={paidByUid}>{txn.paidByName} (original)</option>}
-                </select>
-              </div>
+              <PaidBySelect
+                approvedUsers={approvedUsers} user={user} paidByUid={paidByUid} setPaidByUid={setPaidByUid}
+                label="Paid By" required={false}
+                extraOption={!approvedUsers.some(u => u.id === paidByUid) && paidByUid ? <option value={paidByUid}>{txn.paidByName} (original)</option> : null}
+              />
             )}
             <div className="form-grid">
               <div className="field"><label className="label">Date *</label><input className="input" type="date" lang="en-GB" value={date} onChange={e => setDate(e.target.value)} required /></div>
@@ -396,91 +445,14 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState('');
   const [paidByUid, setPaidByUid] = useState(user?.uid || '');
-  const [isSplit, setIsSplit] = useState(false);
-  const [selectedUsers, setSelectedUsers] = useState([]);
-  const [splitAmounts, setSplitAmounts] = useState({});
-  const [splitModes, setSplitModes] = useState({});
-  const [lastEditedField, setLastEditedField] = useState(null);
-  const [invalidSplitUsers, setInvalidSplitUsers] = useState([]);
-  const [invalidSplitModes, setInvalidSplitModes] = useState([]);
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const split = useSplitPayment({ amount, setAmount, user });
+  const { isSplit, splitTotal, validateSplit, markInvalid, buildSplitData, handleAmountChange } = split;
+
   const selectedUser = approvedUsers.find(u => u.id === paidByUid) || { id: user?.uid, name: profile?.name || user?.displayName || user?.email, email: user?.email };
-
-  useEffect(() => {
-    if (isSplit && lastEditedField === 'total' && amount && selectedUsers.length > 0) {
-      const total = parseToNumber(amount);
-      const perPerson = Math.floor(total / selectedUsers.length);
-      const remainder = total - (perPerson * selectedUsers.length);
-      const newAmounts = { ...splitAmounts };
-      selectedUsers.forEach((id, idx) => { newAmounts[id] = idx === 0 ? perPerson + remainder : perPerson; });
-      setSplitAmounts(newAmounts);
-    }
-  }, [amount, isSplit, lastEditedField, selectedUsers]);
-
-  useEffect(() => {
-    if (isSplit && lastEditedField === 'split') {
-      const sum = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
-      setAmount(sum > 0 ? formatWithCommas(String(sum)) : '');
-    }
-  }, [splitAmounts, selectedUsers, isSplit, lastEditedField]);
-
-  const handleAmountChange = (value) => { setAmount(formatWithCommas(value)); setLastEditedField('total'); };
-
-  const toggleSplit = (checked) => {
-    setIsSplit(checked);
-    if (checked) {
-      const initialSelected = user?.uid ? [user.uid] : [];
-      setSelectedUsers(initialSelected);
-      if (amount && initialSelected.length > 0) setSplitAmounts(prev => ({ ...prev, [initialSelected[0]]: parseInt(amount) }));
-      setLastEditedField(amount ? 'total' : null);
-      setInvalidSplitUsers([]);
-      setInvalidSplitModes([]);
-    } else {
-      setSelectedUsers([]);
-      setSplitAmounts({});
-      setSplitModes({});
-      setLastEditedField(null);
-      setInvalidSplitUsers([]);
-      setInvalidSplitModes([]);
-    }
-  };
-
-  const toggleUserInSplit = (uid) => {
-    const isCurrentlySelected = selectedUsers.includes(uid);
-    const nextSelected = isCurrentlySelected ? selectedUsers.filter(id => id !== uid) : [...selectedUsers, uid];
-    setSelectedUsers(nextSelected);
-    if (isCurrentlySelected) {
-      setInvalidSplitUsers(prev => prev.filter(id => id !== uid));
-      setInvalidSplitModes(prev => prev.filter(id => id !== uid));
-    }
-    if (!isCurrentlySelected && lastEditedField === 'total' && amount && nextSelected.length > 0) {
-      const total = parseInt(amount);
-      const perPerson = Math.floor(total / nextSelected.length);
-      const remainder = total - (perPerson * nextSelected.length);
-      const newAmounts = { ...splitAmounts };
-      nextSelected.forEach((id, idx) => { newAmounts[id] = idx === 0 ? perPerson + remainder : perPerson; });
-      setSplitAmounts(newAmounts);
-    }
-  };
-
-  const handleSplitAmountChange = (uid, value) => {
-    setSplitAmounts(prev => ({ ...prev, [uid]: value }));
-    setLastEditedField('split');
-    if (value && parseInt(value) > 0) setInvalidSplitUsers(prev => prev.filter(id => id !== uid));
-  };
-
-  const handleSplitModeChange = (uid, value) => {
-    setSplitModes(prev => ({ ...prev, [uid]: value }));
-    if (value) setInvalidSplitModes(prev => prev.filter(id => id !== uid));
-  };
-
-  const splitTotal = selectedUsers.reduce((s, uid) => s + (parseInt(splitAmounts[uid]) || 0), 0);
-  const splitValid = isSplit ? (selectedUsers.length > 0 && splitTotal > 0 && (!amount || splitTotal === parseInt(amount))) : true;
-  const allModesSelected = isSplit ? selectedUsers.every(uid => splitModes[uid]) : true;
-
 
   const handleSubmit = async (e) => {
     e.preventDefault(); setError('');
@@ -490,15 +462,8 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
       if (!mode) return setError('Mode is required');
     }
     if (!description.trim()) return setError('Description is required');
-    if (isSplit) {
-      if (selectedUsers.length === 0) return setError('Select at least one person for the split');
-      if (splitTotal <= 0) return setError('Enter at least one split amount');
-      const emptyAmounts = selectedUsers.filter(uid => !splitAmounts[uid] || parseInt(splitAmounts[uid]) <= 0);
-      if (emptyAmounts.length > 0) return setError(`Enter an amount for: ${emptyAmounts.map(uid => approvedUsers.find(u => u.id === uid)?.name || uid).join(', ')}`);
-      if (amount && splitTotal !== parseInt(amount)) return setError(`Split amounts (₹${splitTotal}) must add up to ₹${amount}`);
-      const emptyModes = selectedUsers.filter(uid => !splitModes[uid]);
-      if (emptyModes.length > 0) return setError(`Select a payment mode for: ${emptyModes.map(uid => approvedUsers.find(u => u.id === uid)?.name || uid).join(', ')}`);
-    }
+    const splitErr = validateSplit(approvedUsers);
+    if (splitErr) { markInvalid(); return setError(splitErr); }
     setSaving(true);
     try {
       let proofs = [];
@@ -519,13 +484,7 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
       };
       let data;
       if (isSplit) {
-        const splitDetails = selectedUsers.map(uid => {
-          const u = approvedUsers.find(x => x.id === uid);
-          return { uid, name: u?.name || u?.email || 'Unknown', email: u?.email, amount: parseInt(splitAmounts[uid] || 0), mode: splitModes[uid] || '' };
-        });
-        const modeCounts = {};
-        splitDetails.forEach(s => { if (s.mode) modeCounts[s.mode] = (modeCounts[s.mode] || 0) + 1; });
-        const primaryMode = Object.keys(modeCounts).sort((a, b) => modeCounts[b] - modeCounts[a])[0] || '';
+        const { splitDetails, primaryMode } = buildSplitData(approvedUsers);
         data = { ...baseData, isSplit: true, splitDetails, mode: primaryMode, paidByUid: null, paidByName: 'Split Payment', paidByEmail: null };
       } else {
         data = { ...baseData, isSplit: false, mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email };
@@ -550,71 +509,26 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
           <div className="edit-form-body">
             {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
             <div className="alert" style={{ background: 'var(--cream-2)', color: 'var(--muted)', marginBottom: 16, fontSize: 13 }}>ℹ️ This creates its own transaction (own date, payer, proof) that counts independently in reports, and adds its amount to {parent.txnId}'s combined total in this list.</div>
-            <div className="field">
-              <label className="label">Split transaction?</label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, margin: 0 }}>
-                <input type="checkbox" checked={isSplit} onChange={e => toggleSplit(e.target.checked)} />
-                <span style={{ color: 'var(--muted)', fontSize: 13 }}>Split amount across multiple people</span>
-              </label>
-            </div>
             <div className="form-grid">
               <div className="field"><label className="label">Date *</label><input className="input" type="date" lang="en-GB" value={date} onChange={e => setDate(e.target.value)} required />
                 <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>Selected date: {formatDate(date)}</div>
               </div>
               <div className="field"><label className="label">Amount (INR) * {isSplit && <span style={{ color: 'var(--muted)', fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontSize: 11 }}>(auto-syncs)</span>}</label><input className="input mono" type="text" inputMode="numeric" value={amount} onChange={e => handleAmountChange(e.target.value)} required={!isSplit} /></div>
             </div>
-            {isSplit ? (
-              <div style={{ border: '1px solid var(--cream-3)', borderRadius: 10, padding: 14, background: 'rgba(255,252,245,0.7)', marginBottom: 16 }}>
-                <div style={{ marginBottom: 10, fontSize: 13, color: 'var(--muted)' }}>Select people to split this expense and enter their individual share.</div>
-                {approvedUsers.map(u => {
-                  const selected = selectedUsers.includes(u.id);
-                  const modeInvalid = invalidSplitModes.includes(u.id);
-                  const amountInvalid = invalidSplitUsers.includes(u.id);
-                  return (
-                    <div key={u.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--cream-3)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <input type="checkbox" checked={selected} onChange={() => toggleUserInSplit(u.id)} />
-                        <span style={{ fontSize: 13 }}>{u.name || u.email}{u.id === user?.uid ? ' (you)' : ''}</span>
-                      </div>
-                      {selected && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                          <div>
-                            <label className="label" style={{ marginBottom: 6 }}>Amount *</label>
-                            <input className={`input mono ${amountInvalid ? 'input-error' : ''}`} type="text" inputMode="numeric" value={splitAmounts[u.id] || ''} onChange={e => handleSplitAmountChange(u.id, e.target.value.replace(/\D/g, ''))} />
-                          </div>
-                          <div>
-                            <label className="label" style={{ marginBottom: 6 }}>Mode *</label>
-                            <select className={`select split-mode-select ${modeInvalid ? 'input-error' : ''}`} value={splitModes[u.id] || ''} onChange={e => handleSplitModeChange(u.id, e.target.value)}>
-                              <option value="">Select…</option>
-                              {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-                            </select>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-                <div style={{ marginTop: 12, fontSize: 13, color: 'var(--muted)' }}>
-                  Split total: <strong>₹{formatINR(splitTotal)}</strong>
-                  {amount ? <span> · Amount field: ₹{formatINR(amount)}</span> : null}
-                </div>
+
+            <SplitPanel split={split} approvedUsers={approvedUsers} user={user} amount={amount} />
+
+            {!isSplit && (
+              <PaidBySelect approvedUsers={approvedUsers} user={user} paidByUid={paidByUid} setPaidByUid={setPaidByUid} />
+            )}
+            {!isSplit && (
+              <div className="field">
+                <label className="label">Mode of Payment *</label>
+                <select className="select" value={mode} onChange={e => setMode(e.target.value)} required>
+                  <option value="">Select…</option>
+                  {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
               </div>
-            ) : (
-              <>
-                <div className="field">
-                  <label className="label">Paid By</label>
-                  <select className="select" value={paidByUid} onChange={e => setPaidByUid(e.target.value)}>
-                    {approvedUsers.map(u => <option key={u.id} value={u.id}>{u.name || u.email}{u.id === user?.uid ? ' (you)' : ''}</option>)}
-                  </select>
-                </div>
-                <div className="field">
-                  <label className="label">Mode of Payment *</label>
-                  <select className="select" value={mode} onChange={e => setMode(e.target.value)} required>
-                    <option value="">Select…</option>
-                    {PAYMENT_MODES.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-              </>
             )}
             <div className="field">
               <label className="label">Description * ({description.length}/300)</label>
@@ -737,7 +651,8 @@ const FilterPanel = ({ filters, setFilters, paidByOptions, onReset }) => (
 
 // Timeline view — grouped by month. Children are nested inside their parent's card, not
 // re-bucketed by their own month, so the group stays anchored to the parent's date.
-const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting }) => {
+const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting, search }) => {
+  const searchLower = (search || '').toLowerCase();
   const grouped = useMemo(() => {
     const map = new Map();
     transactions.forEach(t => {
@@ -761,10 +676,10 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
           <div className="timeline-items">
             {group.items.map(t => {
               const proofs = getProofsArray(t);
-              const children = getChildrenOf(allTxns, t.id);
-              const parentFlag = children.length > 0 || (t.childCount || 0) > 0;
+              const allChildren = getChildrenOf(allTxns, t.id);
+              const children = getVisibleChildren(allTxns, t.id, searchLower);
+              const parentFlag = allChildren.length > 0 || (t.childCount || 0) > 0;
               const expanded = expandedIds.has(t.id);
-              // no-op
               return (
                 <div key={t.id} className="timeline-item">
                   <div className="timeline-dot" />
@@ -773,7 +688,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
                           {t.isPinned && <Pin size={11} />}
-                          {t.txnId || ''}
+                          <Highlight text={t.txnId || ''} query={search} />
                         </div>
                         <div style={{ fontSize: 12, color: 'var(--muted)' }}>{formatDate(t.date)}</div>
                       </div>
@@ -782,10 +697,10 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                         {parentFlag && <div className="combined-total-badge">₹{formatINR(t.combinedTotal)} total</div>}
                       </div>
                     </div>
-                    <div style={{ fontSize: 14, margin: '6px 0', wordBreak: 'break-word' }}><DescriptionCell text={getDescription(t)} /></div>
+                    <div style={{ fontSize: 14, margin: '6px 0', wordBreak: 'break-word' }}><DescriptionCell text={getDescription(t)} query={search} /></div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                      <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}>{formatMode(t)}</span>
-                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>· {formatPaidBy(t)}</span>
+                      <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}><Highlight text={formatMode(t)} query={search} /></span>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(t)} query={search} /></span>
                     </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {proofs.length > 0
@@ -815,15 +730,15 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                             <div key={c.id} className="timeline-child-card">
                               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                                 <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>↳ {c.txnId}</div>
+                                  <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>↳ <Highlight text={c.txnId} query={search} /></div>
                                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>{formatDate(c.date)}</div>
                                 </div>
                                 <div style={{ fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>₹{formatINR(c.amount)}</div>
                               </div>
-                              <div style={{ fontSize: 13, margin: '4px 0', wordBreak: 'break-word' }}>{getDescription(c)}</div>
+                              <div style={{ fontSize: 13, margin: '4px 0', wordBreak: 'break-word' }}><DescriptionCell text={getDescription(c)} query={search} /></div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                <span className={`mode-pill ${(c.mode || '').toLowerCase()}`} style={{ fontSize: 10 }}>{c.mode}</span>
-                                <span style={{ fontSize: 11, color: 'var(--muted)' }}>· {formatPaidBy(c)}</span>
+                                <span className={`mode-pill ${(c.mode || '').toLowerCase()}`} style={{ fontSize: 10 }}><Highlight text={c.mode} query={search} /></span>
+                                <span style={{ fontSize: 11, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(c)} query={search} /></span>
                                 {cProofs.length > 0
                                   ? <button className="view-btn" onClick={() => onView(c)}><Eye size={11} /> View</button>
                                   : <span className="no-proof" style={{ fontSize: 10 }}>no proof</span>}
@@ -850,17 +765,19 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
 };
 
 // Mobile card
-const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, deleting }) => {
+const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, deleting, search }) => {
+  const searchLower = (search || '').toLowerCase();
   const proofs = getProofsArray(t);
-  const children = getChildrenOf(allTxns, t.id);
-  const parentFlag = children.length > 0 || (t.childCount || 0) > 0;
+  const allChildren = getChildrenOf(allTxns, t.id);
+  const children = getVisibleChildren(allTxns, t.id, searchLower);
+  const parentFlag = allChildren.length > 0 || (t.childCount || 0) > 0;
   return (
     <div className="txn-card">
       <div className="txn-card-row">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div className="txn-card-id" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             {t.isPinned && <Pin size={12} style={{ color: 'var(--accent)' }} />}
-            {t.txnId || ''}
+            <Highlight text={t.txnId || ''} query={search} />
           </div>
           <div className="txn-card-date">{formatDate(t.date)}</div>
         </div>
@@ -869,11 +786,11 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
           {parentFlag && <div className="combined-total-badge">₹{formatINR(t.combinedTotal)} total</div>}
         </div>
       </div>
-      <div className="txn-card-paidto"><DescriptionCell text={getDescription(t)} /></div>
+      <div className="txn-card-paidto"><DescriptionCell text={getDescription(t)} query={search} /></div>
       <div className="txn-card-row" style={{ marginTop: 6 }}>
         <div className="txn-card-meta">
-          <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}>{formatMode(t)}</span>
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>· {formatPaidBy(t)}</span>
+          <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}><Highlight text={formatMode(t)} query={search} /></span>
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(t)} query={search} /></span>
         </div>
       </div>
       <div className="txn-card-actions">
@@ -908,16 +825,16 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
             <div key={c.id} className="txn-card-child">
               <div className="txn-card-row">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <div className="txn-card-id">↳ {c.txnId}</div>
+                  <div className="txn-card-id">↳ <Highlight text={c.txnId} query={search} /></div>
                   <div className="txn-card-date">{formatDate(c.date)}</div>
                 </div>
                 <div className="txn-card-amount">₹{formatINR(c.amount)}</div>
               </div>
-              <div className="txn-card-paidto"><DescriptionCell text={getDescription(c)} /></div>
+              <div className="txn-card-paidto"><DescriptionCell text={getDescription(c)} query={search} /></div>
               <div className="txn-card-row" style={{ marginTop: 4 }}>
                 <div className="txn-card-meta">
-                  <span className={`mode-pill ${(c.mode || '').toLowerCase()}`}>{formatMode(c)}</span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>· {formatPaidBy(c)}</span>
+                  <span className={`mode-pill ${(c.mode || '').toLowerCase()}`}><Highlight text={formatMode(c)} query={search} /></span>
+                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(c)} query={search} /></span>
                 </div>
               </div>
               <div className="txn-card-actions">
@@ -937,7 +854,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
 };
 
 // Desktop table row — shared by top-level transactions and their nested child rows
-const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting }) => {
+const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting, search }) => {
   const proofs = getProofsArray(t);
   const parentFlag = !isChildRow && (hasChildren || (t.childCount || 0) > 0);
   return (
@@ -951,16 +868,16 @@ const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, 
           )}
           {isChildRow && <span style={{ color: 'var(--muted)' }}>↳</span>}
           {!isChildRow && t.isPinned && <Pin size={12} style={{ color: 'var(--accent)' }} />}
-          {t.txnId || '—'}
+          <Highlight text={t.txnId || '—'} query={search} />
         </div>
       </td>
       <td className="mono" style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{formatDate(t.date)}</td>
-      <td style={{ maxWidth: 200 }}>{formatPaidBy(t)}</td>
-      <td style={{ maxWidth: 320 }}><DescriptionCell text={getDescription(t)} /></td>
+      <td style={{ maxWidth: 200 }}><Highlight text={formatPaidBy(t)} query={search} /></td>
+      <td style={{ maxWidth: 320 }}><DescriptionCell text={getDescription(t)} query={search} /></td>
       <td>
         {t.isSplit && Array.isArray(t.splitDetails)
-          ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{[...new Set(t.splitDetails.map(s => s.mode).filter(Boolean))].map(m => <span key={m} className={`mode-pill ${m.toLowerCase()}`} style={{ fontSize: 10 }}>{m}</span>)}</div>
-          : <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}>{t.mode}</span>}
+          ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{[...new Set(t.splitDetails.map(s => s.mode).filter(Boolean))].map(m => <span key={m} className={`mode-pill ${m.toLowerCase()}`} style={{ fontSize: 10 }}><Highlight text={m} query={search} /></span>)}</div>
+          : <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}><Highlight text={t.mode} query={search} /></span>}
       </td>
       <td className="amount-cell" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
         ₹{formatINR(t.amount)}
@@ -1097,9 +1014,7 @@ const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
 const TransactionDetails = ({ onAddEntry }) => {
   const { user, profile, isAdmin } = useAuth();
   const { activeBucket } = useBucket();
-  const [txns, setTxns] = useState([]);
-  const [approvedUsers, setApprovedUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { txns, loading, approvedUsers, applyAdd, applyUpdate, applyRemove } = useTransactions();
   const [search, setSearch] = useState('');
   const [viewing, setViewing] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -1114,32 +1029,6 @@ const TransactionDetails = ({ onAddEntry }) => {
   const [showExport, setShowExport] = useState(false);
   const emptyFilters = { dateFrom: '', dateTo: '', paidBy: '', mode: '', amountMin: '', amountMax: '' };
   const [filters, setFilters] = useState(emptyFilters);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      if (!activeBucket || !activeBucket.id) { setTxns([]); setApprovedUsers([]); return; }
-      const key = `txns:bucket:${activeBucket.id}`;
-      const all = await cache.fetchWithCache(key, async () => {
-        try {
-          const q = query(collection(db, 'transactions'), where('bucketId', '==', activeBucket.id), where('deleted', '==', false), orderBy('createdAt', 'desc'));
-          const snap = await getDocs(q);
-          return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        } catch (e) {
-          console.error('Indexed query failed, falling back to full collection:', e.message || e);
-          const snap = await getDocs(collection(db, 'transactions'));
-          return snap.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter(t => t.bucketId === activeBucket.id && !t.deleted);
-        }
-      }, 1000 * 30);
-      setTxns(all);
-      const usnap = await getDocs(collection(db, 'users'));
-      setApprovedUsers(usnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.status === 'approved' || u.isPrimary));
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, [activeBucket]);
 
   // Top-level transactions are what the list shows; children only surface when their parent is expanded.
   const topLevel = useMemo(() => txns.filter(t => !t.isChild), [txns]);
@@ -1166,6 +1055,24 @@ const TransactionDetails = ({ onAddEntry }) => {
     return next;
   });
 
+  // Auto-expand any parent whose match is only in one of its children, so the
+  // reason it showed up in search results is actually visible without an extra click.
+  useEffect(() => {
+    if (!search) return;
+    const s = search.toLowerCase();
+    setExpandedIds(prev => {
+      let changed = false;
+      const next = new Set(prev);
+      topLevel.forEach(t => {
+        if (next.has(t.id)) return;
+        if (txnMatchesSearch(t, s)) return;
+        if (getChildrenOf(txns, t.id).some(c => txnMatchesSearch(c, s))) { next.add(t.id); changed = true; }
+      });
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
   const recomputeParentTotals = async (parentId, currentTxns) => {
     const parent = currentTxns.find(t => t.id === parentId);
     if (!parent) return;
@@ -1176,7 +1083,7 @@ const TransactionDetails = ({ onAddEntry }) => {
     const updates = { childCount, childTotal, combinedTotal };
     try {
       await updateDoc(doc(db, 'transactions', parentId), updates);
-      setTxns(prev => prev.map(t => t.id === parentId ? { ...t, ...updates } : t));
+      applyUpdate(parentId, updates);
     } catch (e) { console.error(e); }
   };
 
@@ -1194,8 +1101,10 @@ const TransactionDetails = ({ onAddEntry }) => {
   const filtered = useMemo(() => sortedTopLevel.filter(t => {
     if (search) {
       const s = search.toLowerCase();
-      const matchesSelf = (t.txnId || '').toLowerCase().includes(s) || (formatPaidBy(t) || '').toLowerCase().includes(s) || (getDescription(t) || '').toLowerCase().includes(s) || (formatMode(t) || '').toLowerCase().includes(s) || (t.date || '').includes(s) || String(t.amount || '').includes(s);
-      const matchesChild = getChildrenOf(txns, t.id).some(c => (c.txnId || '').toLowerCase().includes(s) || (formatPaidBy(c) || '').toLowerCase().includes(s) || (getDescription(c) || '').toLowerCase().includes(s) || (formatMode(c) || '').toLowerCase().includes(s) || (c.date || '').includes(s) || String(c.amount || '').includes(s));
+      // Universal search: a transaction stays visible if the term matches it directly,
+      // OR matches the description/any field of one of its related (child) expenses.
+      const matchesSelf = txnMatchesSearch(t, s);
+      const matchesChild = getChildrenOf(txns, t.id).some(c => txnMatchesSearch(c, s));
       if (!matchesSelf && !matchesChild) return false;
     }
     if (filters.dateFrom && t.date < filters.dateFrom) return false;
@@ -1239,8 +1148,7 @@ const TransactionDetails = ({ onAddEntry }) => {
         deletedByName: profile?.name || user.email
       });
       const nextTxns = txns.filter(t => t.id !== txn.id);
-      setTxns(nextTxns);
-      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
+      applyRemove(txn.id);
       if (txn.isChild && txn.parentId) await recomputeParentTotals(txn.parentId, nextTxns);
     } catch (e) { alert('Failed: ' + e.message); }
     finally { setDeleting(null); }
@@ -1248,8 +1156,7 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   const handleSaved = (updated) => {
     const nextTxns = txns.map(t => t.id === updated.id ? updated : t);
-    setTxns(nextTxns);
-    try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
+    applyUpdate(updated.id, updated);
     setEditing(null); setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 3500);
     if (updated.isChild && updated.parentId) recomputeParentTotals(updated.parentId, nextTxns);
@@ -1258,8 +1165,7 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   const handleChildAdded = (newChild) => {
     const nextTxns = [newChild, ...txns];
-    setTxns(nextTxns);
-    try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
+    applyAdd(newChild);
     setAddChildFor(null);
     recomputeParentTotals(newChild.parentId, nextTxns);
     setExpandedIds(prev => new Set(prev).add(newChild.parentId));
@@ -1274,8 +1180,7 @@ const TransactionDetails = ({ onAddEntry }) => {
         favoriteAt: !txn.isFavorite ? new Date().toISOString() : null
       };
       await updateDoc(doc(db, 'transactions', txn.id), updates);
-      setTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...updates } : t));
-      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
+      applyUpdate(txn.id, updates);
     } catch (e) {
       alert('Failed to update favorite: ' + (e.message || e));
     }
@@ -1288,8 +1193,7 @@ const TransactionDetails = ({ onAddEntry }) => {
         pinnedAt: !txn.isPinned ? new Date().toISOString() : null
       };
       await updateDoc(doc(db, 'transactions', txn.id), updates);
-      setTxns(prev => prev.map(t => t.id === txn.id ? { ...t, ...updates } : t));
-      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
+      applyUpdate(txn.id, updates);
     } catch (e) {
       alert('Failed to update pin: ' + (e.message || e));
     }
@@ -1297,16 +1201,11 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   const linkTxnToFavorite = async (txn, parent) => {
     try {
-      await updateDoc(doc(db, 'transactions', txn.id), {
-        isChild: true,
-        parentId: parent.id,
-        parentTxnId: parent.txnId,
-        updatedAt: new Date().toISOString()
-      });
-      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, isChild: true, parentId: parent.id, parentTxnId: parent.txnId } : t);
-      setTxns(nextTxns);
+      const updates = { isChild: true, parentId: parent.id, parentTxnId: parent.txnId, updatedAt: new Date().toISOString() };
+      await updateDoc(doc(db, 'transactions', txn.id), updates);
+      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, ...updates } : t);
+      applyUpdate(txn.id, updates);
       setLinkToFavoriteFor(null);
-      try { cache.invalidateCache(`txns:bucket:${activeBucket.id}`); } catch (e) {}
       recomputeParentTotals(parent.id, nextTxns);
     } catch (e) {
       alert('Failed to link transaction: ' + (e.message || e));
@@ -1318,14 +1217,10 @@ const TransactionDetails = ({ onAddEntry }) => {
     if (!confirm(`Unlink ${txn.txnId} from ${txn.parentTxnId || 'its parent'}?\n\nIt will become a standalone transaction.`)) return;
     const prevParentId = txn.parentId;
     try {
-      await updateDoc(doc(db, 'transactions', txn.id), {
-        isChild: false,
-        parentId: null,
-        parentTxnId: null,
-        updatedAt: new Date().toISOString()
-      });
-      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, isChild: false, parentId: null, parentTxnId: null } : t);
-      setTxns(nextTxns);
+      const updates = { isChild: false, parentId: null, parentTxnId: null, updatedAt: new Date().toISOString() };
+      await updateDoc(doc(db, 'transactions', txn.id), updates);
+      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, ...updates } : t);
+      applyUpdate(txn.id, updates);
       if (prevParentId) await recomputeParentTotals(prevParentId, nextTxns);
     } catch (e) {
       alert('Failed to remove related expense: ' + (e.message || e));
@@ -1374,7 +1269,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {filtered.length === 0 ? (
         <div className="empty-state card"><h3>No transactions found</h3><p>{topLevel.length === 0 ? 'Add a transaction to get started.' : 'Try adjusting your search or filters.'}</p></div>
       ) : viewMode === 'timeline' ? (
-        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} />
       ) : (
         <>
           <div className="table-wrap desktop-only">
@@ -1385,12 +1280,11 @@ const TransactionDetails = ({ onAddEntry }) => {
               <tbody>
                 {filtered.map(t => (
                   <Fragment key={t.id}>
-                    <TxnRow t={t} isChildRow={false} hasChildren={getChildrenOf(txns, t.id).length > 0 || (t.childCount || 0) > 0} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+                    <TxnRow t={t} isChildRow={false} hasChildren={getChildrenOf(txns, t.id).length > 0 || (t.childCount || 0) > 0} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} />
                     {(() => {
-                      const children = getChildrenOf(txns, t.id);
-                      // no-op
+                      const children = getVisibleChildren(txns, t.id, search.toLowerCase());
                       return (expandedIds.has(t.id) && children.map(c => (
-                        <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} />
+                        <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} />
                       )));
                     })()}
                   </Fragment>
@@ -1399,7 +1293,7 @@ const TransactionDetails = ({ onAddEntry }) => {
             </table>
           </div>
           <div className="mobile-only txn-card-list">
-            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} deleting={deleting} />)}
+            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} deleting={deleting} search={search} />)}
           </div>
         </>
       )}

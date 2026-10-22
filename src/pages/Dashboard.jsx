@@ -1,8 +1,6 @@
-import { useEffect, useState, useMemo } from 'react';
-import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
-import cache from '../lib/cache';
-import { db } from '../lib/firebase';
+import { useState, useMemo } from 'react';
 import { useBucket } from '../lib/BucketContext';
+import { useTransactions } from '../lib/TransactionsContext';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import { Plus } from 'lucide-react';
 
@@ -20,35 +18,10 @@ const getContributions = (t) => {
 const Dashboard = ({ onAddEntry }) => {
   const currentYear = new Date().getFullYear();
   const { activeBucket } = useBucket();
-  const [txns, setTxns] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { txns: rawTxns, loading } = useTransactions();
   const [year, setYear] = useState(currentYear);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        if (!activeBucket || !activeBucket.id) { setTxns([]); return; }
-        const key = `txns:bucket:${activeBucket.id}`;
-        const all = await cache.fetchWithCache(key, async () => {
-          try {
-            const q = query(collection(db, 'transactions'), where('bucketId', '==', activeBucket.id), where('deleted', '==', false), orderBy('date', 'desc'));
-            const snap = await getDocs(q);
-            return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          } catch (e) {
-            console.error('Indexed query failed, falling back to full collection:', e.message || e);
-            const snap = await getDocs(collection(db, 'transactions'));
-            return snap.docs
-              .map(d => ({ id: d.id, ...d.data() }))
-              .filter(t => t.bucketId === activeBucket.id && !t.deleted);
-          }
-        }, 1000 * 30);
-        setTxns(all.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-      } catch (e) { console.error(e); }
-      finally { setLoading(false); }
-    };
-    load();
-  }, [activeBucket]);
+  const txns = useMemo(() => [...rawTxns].sort((a, b) => (b.date || '').localeCompare(a.date || '')), [rawTxns]);
 
   const totalAllYears = useMemo(() => txns.reduce((s, t) => s + (t.amount || 0), 0), [txns]);
   const years = useMemo(() => {
