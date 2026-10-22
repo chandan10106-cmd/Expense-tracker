@@ -52,6 +52,13 @@ h3 { font-size: 1.25rem; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; gap: 0; } .form-card { padding: 18px; } }
 .filter-card { margin-bottom: 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.recent-activity-card { padding: 18px 20px; margin-bottom: 20px; }
+.recent-activity-grid { display: grid; grid-template-columns: minmax(0,1fr) 190px; gap: 20px; }
+@media (max-width: 700px) { .recent-activity-grid { grid-template-columns: 1fr; gap: 14px; } }
+.recent-activity-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px; background: transparent; border: none; border-radius: 4px; cursor: pointer; text-align: left; color: var(--ink); }
+.recent-activity-row:hover { background: var(--cream-2); }
+.recent-activity-days { border-left: 1px solid var(--cream-3); padding-left: 18px; }
+@media (max-width: 700px) { .recent-activity-days { border-left: none; border-top: 1px solid var(--cream-3); padding-left: 0; padding-top: 12px; } }
 .auth-shell { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
 .auth-aside { background: var(--ink); color: var(--cream); padding: 60px; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
 .auth-aside::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(circle at 30% 20%, rgba(184,69,31,0.18) 0%, transparent 50%), radial-gradient(circle at 70% 80%, rgba(201,164,73,0.12) 0%, transparent 50%); }

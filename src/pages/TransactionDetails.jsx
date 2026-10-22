@@ -909,21 +909,41 @@ const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, 
 };
 
 // Export modal
-const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
+// Flattens a list of top-level transactions back out with each one's children placed
+// immediately after it — regardless of scope, so the parent/child relationship reads
+// as a group rather than children being scattered wherever their own createdAt lands.
+const buildExportRows = (topLevelList, allTxns) => {
+  const result = [];
+  topLevelList.forEach(t => { result.push(t); result.push(...getChildrenOf(allTxns, t.id)); });
+  return result;
+};
+
+const exportRelationshipLabel = (t) => {
+  if (t.isChild) return `Related to ${t.parentTxnId || '—'}`;
+  if ((t.childCount || 0) > 0) return `Parent · ${t.childCount} related`;
+  return '';
+};
+
+const ExportModal = ({ onClose, filteredTopLevel, allTxns, bucketName }) => {
   const [scope, setScope] = useState('filtered');
-  const data = scope === 'filtered' ? filtered : allTxns;
+  const allTopLevel = useMemo(() => allTxns.filter(t => !t.isChild), [allTxns]);
+  const data = useMemo(() => buildExportRows(scope === 'filtered' ? filteredTopLevel : allTopLevel, allTxns), [scope, filteredTopLevel, allTopLevel, allTxns]);
+  const filteredCount = useMemo(() => buildExportRows(filteredTopLevel, allTxns).length, [filteredTopLevel, allTxns]);
 
   const exportExcel = () => {
     const rows = data.map(t => ({
-      'TX ID': t.txnId || '',
-      'Related To': t.isChild ? (t.parentTxnId || '') : '',
+      'TX ID': `${t.isChild ? '↳ ' : ''}${t.txnId || ''}`,
+      'Relationship': exportRelationshipLabel(t),
       'Date': t.date,
       'Paid By': formatPaidBy(t),
       'Description': getDescription(t),
       'Mode': formatMode(t),
-      'Amount (₹)': t.amount,
+      'Amount (₹)': t.amount || 0,
+      'Combined Total (₹)': (!t.isChild && (t.childCount || 0) > 0) ? (t.combinedTotal || 0) : '',
       'Bucket': t.bucketName || bucketName
     }));
+    const total = data.reduce((s, t) => s + (t.amount || 0), 0);
+    rows.push({ 'TX ID': '', 'Relationship': '', 'Date': '', 'Paid By': '', 'Description': 'TOTAL (parent + related expenses)', 'Mode': '', 'Amount (₹)': total, 'Combined Total (₹)': '', 'Bucket': '' });
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Transactions');
@@ -938,32 +958,41 @@ const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
       <!DOCTYPE html><html><head><meta charset="UTF-8">
       <title>${bucketName} — Transactions</title>
       <style>
-        body { font-family: Georgia, serif; color: #1a1815; padding: 32px; max-width: 900px; margin: 0 auto; }
+        body { font-family: Georgia, serif; color: #1a1815; padding: 32px; max-width: 960px; margin: 0 auto; }
         h1 { font-size: 24px; margin-bottom: 4px; }
         .meta { color: #6b6357; font-size: 13px; margin-bottom: 24px; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th { text-align: left; padding: 8px 12px; background: #ebe1d0; border-bottom: 2px solid #ded2bd; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; }
         td { padding: 10px 12px; border-bottom: 1px solid #ded2bd; }
         tr:last-child td { border-bottom: none; }
+        tr.row-parent td { font-weight: 700; }
+        tr.row-child td { background: #faf6ee; color: #4a443b; font-style: italic; }
         .amount { font-family: monospace; text-align: right; font-weight: 600; }
+        .relationship { font-size: 11px; color: #6b6357; font-style: normal; }
         tfoot td { background: #ebe1d0; font-weight: 700; }
         @media print { body { padding: 0; } }
       </style></head><body>
       <h1>${bucketName} — Transactions</h1>
-      <div class="meta">Exported on ${new Date().toLocaleDateString('en-IN')} · ${data.length} transactions · Total: ₹${formatINRLocal(total)}</div>
+      <div class="meta">Exported on ${new Date().toLocaleDateString('en-IN')} · ${data.length} transactions (parent + related expenses) · Total: ₹${formatINRLocal(total)}</div>
       <table>
-        <thead><tr><th>TX ID</th><th>Date</th><th>Paid By</th><th>Description</th><th>Mode</th><th style="text-align:right">Amount</th></tr></thead>
+        <thead><tr><th>TX ID</th><th>Relationship</th><th>Date</th><th>Paid By</th><th>Description</th><th>Mode</th><th style="text-align:right">Amount</th><th style="text-align:right">Combined Total</th></tr></thead>
         <tbody>
-          ${data.map(t => `<tr>
-            <td style="font-family:monospace;font-size:11px;color:#b8451f">${t.txnId || '—'}${t.isChild && t.parentTxnId ? ` <span style="color:#6b6357">(↳ ${t.parentTxnId})</span>` : ''}</td>
+          ${data.map(t => {
+            const isParentWithChildren = !t.isChild && (t.childCount || 0) > 0;
+            const rowClass = t.isChild ? 'row-child' : (isParentWithChildren ? 'row-parent' : '');
+            return `<tr class="${rowClass}">
+            <td style="font-family:monospace;font-size:11px;color:#b8451f">${t.isChild ? '&nbsp;&nbsp;↳ ' : ''}${t.txnId || '—'}</td>
+            <td class="relationship">${exportRelationshipLabel(t)}</td>
             <td>${formatDate(t.date)}</td>
             <td>${formatPaidBy(t)}</td>
             <td>${getDescription(t)}</td>
             <td>${formatMode(t)}</td>
             <td class="amount">₹${formatINRLocal(t.amount)}</td>
-          </tr>`).join('')}
+            <td class="amount">${isParentWithChildren ? `₹${formatINRLocal(t.combinedTotal)}` : ''}</td>
+          </tr>`;
+          }).join('')}
         </tbody>
-        <tfoot><tr><td colspan="5">Total</td><td class="amount">₹${formatINRLocal(total)}</td></tr></tfoot>
+        <tfoot><tr><td colspan="6">Total (parent + related expenses)</td><td class="amount">₹${formatINRLocal(total)}</td><td></td></tr></tfoot>
       </table>
       </body></html>`;
     const win = window.open('', '_blank');
@@ -983,18 +1012,19 @@ const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
         <div style={{ padding: '20px' }}>
           <div className="field">
             <label className="label">What to export</label>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8 }}>Related expenses are grouped right under their parent transaction, and the total adds up every parent and related expense together.</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 6, border: `2px solid ${scope === 'filtered' ? 'var(--accent)' : 'var(--cream-3)'}`, cursor: 'pointer', background: scope === 'filtered' ? 'rgba(184,69,31,0.04)' : 'var(--cream-2)' }}>
                 <input type="radio" name="scope" value="filtered" checked={scope === 'filtered'} onChange={() => setScope('filtered')} style={{ accentColor: 'var(--accent)' }} />
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>Current view ({filtered.length} transactions)</div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>Current view ({filteredCount} rows)</div>
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>Respects active search and filters</div>
                 </div>
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 6, border: `2px solid ${scope === 'all' ? 'var(--accent)' : 'var(--cream-3)'}`, cursor: 'pointer', background: scope === 'all' ? 'rgba(184,69,31,0.04)' : 'var(--cream-2)' }}>
                 <input type="radio" name="scope" value="all" checked={scope === 'all'} onChange={() => setScope('all')} style={{ accentColor: 'var(--accent)' }} />
                 <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>All transactions ({allTxns.length} transactions)</div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>All transactions ({allTxns.length} rows)</div>
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>Complete bucket history</div>
                 </div>
               </label>
@@ -1005,6 +1035,75 @@ const ExportModal = ({ onClose, filtered, allTxns, bucketName }) => {
           <button className="btn btn-ghost" onClick={onClose} style={{ flex: 1 }}>Cancel</button>
           <button className="btn btn-ghost" onClick={exportExcel} style={{ flex: 1 }}><FileSpreadsheet size={14} /> Excel</button>
           <button className="btn btn-primary" onClick={exportPDF} style={{ flex: 1 }}><FileText size={14} /> PDF</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// "Recent Activity" — the most recently saved transactions, flattened across
+// parents and children (a freshly added related expense should be just as
+// visible here as a freshly added standalone one), plus a day-by-day count of
+// how many entries were saved over the last week.
+const RecentActivityPanel = ({ allTxns, onOpenInfo }) => {
+  const recent = useMemo(() => {
+    return allTxns
+      .map(t => ({ t, activityAt: t.updatedAt || t.createdAt }))
+      .filter(x => x.activityAt)
+      .sort((a, b) => (b.activityAt || '').localeCompare(a.activityAt || ''))
+      .slice(0, 5)
+      .map(x => x.t);
+  }, [allTxns]);
+
+  const dailyCounts = useMemo(() => {
+    const counts = new Map();
+    allTxns.forEach(t => {
+      const activityAt = t.updatedAt || t.createdAt;
+      if (!activityAt) return;
+      const dateKey = String(activityAt).split('T')[0];
+      counts.set(dateKey, (counts.get(dateKey) || 0) + 1);
+    });
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().split('T')[0];
+      days.push({ key, count: counts.get(key) || 0 });
+    }
+    return days;
+  }, [allTxns]);
+
+  if (recent.length === 0) return null;
+  const latest = recent[0];
+  const latestActivityAt = latest.updatedAt || latest.createdAt;
+
+  return (
+    <div className="card recent-activity-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+        <div style={{ fontFamily: 'Fraunces, serif', fontWeight: 600, fontSize: 15 }}>Recent Activity</div>
+        <div style={{ fontSize: 12, color: 'var(--muted)' }}>Last saved {formatDateTime(latestActivityAt)}</div>
+      </div>
+      <div className="recent-activity-grid">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {recent.map(t => (
+            <button key={t.id} type="button" onClick={() => onOpenInfo(t)} className="recent-activity-row">
+              <span className="mono" style={{ color: 'var(--accent)', fontWeight: 600, fontSize: 11, whiteSpace: 'nowrap' }}>{t.isChild ? '↳ ' : ''}{t.txnId}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>{getDescription(t)}</span>
+              <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{formatPaidBy(t)}</span>
+              <span className="mono" style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>₹{formatINR(t.amount)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="recent-activity-days">
+          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', marginBottom: 6 }}>Saved in last 7 days</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {dailyCounts.map(({ key, count }) => (
+              <div key={key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, opacity: count === 0 ? 0.5 : 1 }}>
+                <span>{formatDate(key)}</span>
+                <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -1124,14 +1223,6 @@ const TransactionDetails = ({ onAddEntry }) => {
 
   const filteredTotal = useMemo(() => filtered.reduce((s, t) => s + (t.amount || 0), 0), [filtered]);
 
-  // Export/totals must match the Dashboard, which sums every non-deleted transaction
-  // (parents and children alike) — so exports need children flattened back in, not just parents.
-  const filteredWithChildren = useMemo(() => {
-    const result = [];
-    filtered.forEach(t => { result.push(t); result.push(...getChildrenOf(txns, t.id)); });
-    return result;
-  }, [filtered, txns]);
-
   const handleDelete = async (txn) => {
     if (!isAdmin) return;
     if (!txn.isChild) {
@@ -1244,6 +1335,8 @@ const TransactionDetails = ({ onAddEntry }) => {
         </div>
       </div>
 
+      <RecentActivityPanel allTxns={txns} onOpenInfo={setInfo} />
+
       <div className="txn-toolbar">
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
           <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
@@ -1303,7 +1396,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {info && <InfoModal txn={info} childrenList={getChildrenOf(txns, info.id)} onClose={() => setInfo(null)} onViewProofs={t => { setInfo(null); setViewing(t); }} onTogglePin={async t => { await togglePin(t); setInfo(prev => prev && prev.id === t.id ? { ...prev, isPinned: !t.isPinned } : prev); }} />}
       {addChildFor && <AddChildModal parent={addChildFor} approvedUsers={approvedUsers} user={user} profile={profile} activeBucket={activeBucket} onClose={() => setAddChildFor(null)} onCreated={handleChildAdded} />}
       {linkToFavoriteFor && <LinkToFavoriteModal txn={linkToFavoriteFor} favoriteTxns={favoriteParents} onClose={() => setLinkToFavoriteFor(null)} onSelect={parent => linkTxnToFavorite(linkToFavoriteFor, parent)} />}
-      {showExport && <ExportModal onClose={() => setShowExport(false)} filtered={filteredWithChildren} allTxns={txns} bucketName={activeBucket.name} />}
+      {showExport && <ExportModal onClose={() => setShowExport(false)} filteredTopLevel={filtered} allTxns={txns} bucketName={activeBucket.name} />}
 
       {/* debug overlay removed */}
     </div>
