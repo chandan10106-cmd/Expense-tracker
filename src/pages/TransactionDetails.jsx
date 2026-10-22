@@ -91,14 +91,40 @@ const txnMatchesSearch = (t, searchLower) => {
   );
 };
 
-// Children to actually render under an expanded parent. Outside of a search,
-// that's every child; while searching, only the children that themselves match
-// the term — so expanding a parent that only matched because of one child
-// doesn't dump every unrelated sibling into view too.
-const getVisibleChildren = (allTxns, parentId, searchLower) => {
+const NO_FILTERS = { dateFrom: '', dateTo: '', paidBy: '', mode: '', amountMin: '', amountMax: '' };
+const hasActiveFilters = (filters) => Object.values(filters || NO_FILTERS).some(v => v !== '');
+
+// A single transaction (parent or child) matches the date/paid-by/mode/amount
+// filters — used the same way as txnMatchesSearch, so a child paid by someone (or
+// dated, or moded) differently from its parent can still surface its parent.
+const txnMatchesFilters = (t, filters) => {
+  if (!filters) return true;
+  if (filters.dateFrom && t.date < filters.dateFrom) return false;
+  if (filters.dateTo && t.date > filters.dateTo) return false;
+  if (filters.paidBy) {
+    if (t.isSplit && Array.isArray(t.splitDetails)) { if (!t.splitDetails.some(d => d.name === filters.paidBy)) return false; }
+    else if (t.paidByName !== filters.paidBy) return false;
+  }
+  if (filters.mode) {
+    if (t.isSplit && Array.isArray(t.splitDetails)) { if (!t.splitDetails.some(d => d.mode === filters.mode)) return false; }
+    else if (t.mode !== filters.mode) return false;
+  }
+  if (filters.amountMin !== '' && (t.amount || 0) < parseInt(filters.amountMin)) return false;
+  if (filters.amountMax !== '' && (t.amount || 0) > parseInt(filters.amountMax)) return false;
+  return true;
+};
+
+const txnMatchesAll = (t, searchLower, filters) => txnMatchesSearch(t, searchLower) && txnMatchesFilters(t, filters);
+
+// Children to actually render under an expanded parent. Outside of an active
+// search/filter, that's every child; while one is active, only the children that
+// themselves match — so expanding a parent that only matched because of one child
+// (a different payer, a different date, …) doesn't dump every unrelated sibling
+// into view too.
+const getVisibleChildren = (allTxns, parentId, searchLower, filters) => {
   const children = getChildrenOf(allTxns, parentId);
-  if (!searchLower) return children;
-  return children.filter(c => txnMatchesSearch(c, searchLower));
+  if (!searchLower && !hasActiveFilters(filters)) return children;
+  return children.filter(c => txnMatchesAll(c, searchLower, filters));
 };
 
 const formatPaidBy = (t) => {
@@ -651,7 +677,7 @@ const FilterPanel = ({ filters, setFilters, paidByOptions, onReset }) => (
 
 // Timeline view — grouped by month. Children are nested inside their parent's card, not
 // re-bucketed by their own month, so the group stays anchored to the parent's date.
-const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting, search }) => {
+const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, isAdmin, deleting, search, filters }) => {
   const searchLower = (search || '').toLowerCase();
   const grouped = useMemo(() => {
     const map = new Map();
@@ -679,7 +705,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
             {group.items.map(t => {
               const proofs = getProofsArray(t);
               const allChildren = getChildrenOf(allTxns, t.id);
-              const children = getVisibleChildren(allTxns, t.id, searchLower);
+              const children = getVisibleChildren(allTxns, t.id, searchLower, filters);
               const parentFlag = allChildren.length > 0 || (t.childCount || 0) > 0;
               const expanded = expandedIds.has(t.id);
               return (
@@ -767,11 +793,11 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
 };
 
 // Mobile card
-const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, deleting, search }) => {
+const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEdit, onDelete, onInfo, onAddChild, onToggleFavorite, onLinkToFavorite, onRemoveFromParent, favoriteParents, deleting, search, filters }) => {
   const searchLower = (search || '').toLowerCase();
   const proofs = getProofsArray(t);
   const allChildren = getChildrenOf(allTxns, t.id);
-  const children = getVisibleChildren(allTxns, t.id, searchLower);
+  const children = getVisibleChildren(allTxns, t.id, searchLower, filters);
   const parentFlag = allChildren.length > 0 || (t.childCount || 0) > 0;
   return (
     <div className="txn-card">
@@ -1166,23 +1192,24 @@ const TransactionDetails = ({ onAddEntry }) => {
     return next;
   });
 
-  // Auto-expand any parent whose match is only in one of its children, so the
-  // reason it showed up in search results is actually visible without an extra click.
+  // Auto-expand any parent whose match (search term, paid-by, date range, mode, or
+  // amount filter) is only in one of its children, so the reason it showed up in
+  // the results is actually visible without an extra click.
   useEffect(() => {
-    if (!search) return;
+    if (!search && !hasActiveFilters(filters)) return;
     const s = search.toLowerCase();
     setExpandedIds(prev => {
       let changed = false;
       const next = new Set(prev);
       topLevel.forEach(t => {
         if (next.has(t.id)) return;
-        if (txnMatchesSearch(t, s)) return;
-        if (getChildrenOf(txns, t.id).some(c => txnMatchesSearch(c, s))) { next.add(t.id); changed = true; }
+        if (txnMatchesAll(t, s, filters)) return;
+        if (getChildrenOf(txns, t.id).some(c => txnMatchesAll(c, s, filters))) { next.add(t.id); changed = true; }
       });
       return changed ? next : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, filters]);
 
   const recomputeParentTotals = async (parentId, currentTxns) => {
     const parent = currentTxns.find(t => t.id === parentId);
@@ -1198,40 +1225,33 @@ const TransactionDetails = ({ onAddEntry }) => {
     } catch (e) { console.error(e); }
   };
 
+  // Scans every transaction, not just top-level ones, so someone who only ever
+  // appears as the payer on a related (child) expense still shows up as a
+  // selectable option here.
   const paidByOptions = useMemo(() => {
     const s = new Set();
-    topLevel.forEach(t => {
+    txns.forEach(t => {
       if (t.isSplit && Array.isArray(t.splitDetails)) t.splitDetails.forEach(d => d.name && s.add(d.name));
       else if (t.paidByName) s.add(t.paidByName);
     });
     return Array.from(s).sort();
-  }, [topLevel]);
+  }, [txns]);
 
   const activeFilterCount = useMemo(() => Object.values(filters).filter(v => v !== '').length, [filters]);
 
-  const filtered = useMemo(() => sortedTopLevel.filter(t => {
-    if (search) {
-      const s = search.toLowerCase();
-      // Universal search: a transaction stays visible if the term matches it directly,
-      // OR matches the description/any field of one of its related (child) expenses.
-      const matchesSelf = txnMatchesSearch(t, s);
-      const matchesChild = getChildrenOf(txns, t.id).some(c => txnMatchesSearch(c, s));
-      if (!matchesSelf && !matchesChild) return false;
-    }
-    if (filters.dateFrom && t.date < filters.dateFrom) return false;
-    if (filters.dateTo && t.date > filters.dateTo) return false;
-    if (filters.paidBy) {
-      if (t.isSplit && Array.isArray(t.splitDetails)) { if (!t.splitDetails.some(d => d.name === filters.paidBy)) return false; }
-      else if (t.paidByName !== filters.paidBy) return false;
-    }
-    if (filters.mode) {
-      if (t.isSplit && Array.isArray(t.splitDetails)) { if (!t.splitDetails.some(d => d.mode === filters.mode)) return false; }
-      else if (t.mode !== filters.mode) return false;
-    }
-    if (filters.amountMin !== '' && (t.amount || 0) < parseInt(filters.amountMin)) return false;
-    if (filters.amountMax !== '' && (t.amount || 0) > parseInt(filters.amountMax)) return false;
-    return true;
-  }), [sortedTopLevel, search, filters, txns]);
+  // A parent stays visible if it matches the search term AND every active filter
+  // (date range, paid by, mode, amount) itself, OR if one of its related (child)
+  // expenses does — e.g. filtering "Paid by: Bob" surfaces a parent whose only
+  // connection to Bob is a related expense he paid for, not just parents Bob paid
+  // directly. getVisibleChildren then narrows which children actually render.
+  const filtered = useMemo(() => {
+    const s = search.toLowerCase();
+    return sortedTopLevel.filter(t => {
+      const matchesSelf = txnMatchesAll(t, s, filters);
+      const matchesChild = getChildrenOf(txns, t.id).some(c => txnMatchesAll(c, s, filters));
+      return matchesSelf || matchesChild;
+    });
+  }, [sortedTopLevel, search, filters, txns]);
 
   // Matches a parent's own amount with every one of its related expenses, not just
   // the parent — so this total agrees with the per-row "combined total" badges and
@@ -1383,7 +1403,7 @@ const TransactionDetails = ({ onAddEntry }) => {
       {filtered.length === 0 ? (
         <div className="empty-state card"><h3>No transactions found</h3><p>{topLevel.length === 0 ? 'Add a transaction to get started.' : 'Try adjusting your search or filters.'}</p></div>
       ) : viewMode === 'timeline' ? (
-        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} />
+        <TimelineView transactions={filtered} allTxns={txns} expandedIds={expandedIds} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} filters={filters} />
       ) : (
         <>
           <div className="table-wrap desktop-only">
@@ -1396,7 +1416,7 @@ const TransactionDetails = ({ onAddEntry }) => {
                   <Fragment key={t.id}>
                     <TxnRow t={t} isChildRow={false} hasChildren={getChildrenOf(txns, t.id).length > 0 || (t.childCount || 0) > 0} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} />
                     {(() => {
-                      const children = getVisibleChildren(txns, t.id, search.toLowerCase());
+                      const children = getVisibleChildren(txns, t.id, search.toLowerCase(), filters);
                       return (expandedIds.has(t.id) && children.map(c => (
                         <TxnRow key={c.id} t={c} isChildRow onToggleExpand={toggleExpand} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} isAdmin={isAdmin} deleting={deleting} search={search} />
                       )));
@@ -1407,7 +1427,7 @@ const TransactionDetails = ({ onAddEntry }) => {
             </table>
           </div>
           <div className="mobile-only txn-card-list">
-            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} deleting={deleting} search={search} />)}
+            {filtered.map(t => <TxnCard key={t.id} t={t} allTxns={txns} expanded={expandedIds.has(t.id)} onToggleExpand={toggleExpand} canDelete={isAdmin} onView={setViewing} onEdit={setEditing} onDelete={handleDelete} onInfo={setInfo} onAddChild={setAddChildFor} onToggleFavorite={toggleFavorite} onLinkToFavorite={setLinkToFavoriteFor} onRemoveFromParent={removeChildFromParent} favoriteParents={favoriteParents} deleting={deleting} search={search} filters={filters} />)}
           </div>
         </>
       )}

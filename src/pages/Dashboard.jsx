@@ -39,7 +39,7 @@ const Dashboard = ({ onAddEntry }) => {
     return Array.from(map.entries()).sort((a, b) => b[1] - a[1]).map(([name]) => name);
   }, [filtered]);
 
-  const monthlyData = useMemo(() => {
+  const monthlyDataFull = useMemo(() => {
     const data = MONTHS.map(m => { const row = { month: m }; usersInYear.forEach(u => { row[u] = 0; }); return row; });
     filtered.forEach(t => {
       const idx = (t.month || (new Date(t.date).getMonth() + 1)) - 1;
@@ -47,6 +47,19 @@ const Dashboard = ({ onAddEntry }) => {
     });
     return data;
   }, [filtered, usersInYear]);
+
+  // Trim months with no spend at all before the first entry and after the last one
+  // (e.g. nothing happened yet in Jan–Mar, or hasn't happened yet in Nov–Dec) — but
+  // keep any zero month that falls *between* two months that do have activity, so a
+  // genuine gap in spending still shows as a gap rather than being hidden.
+  const monthlyData = useMemo(() => {
+    const monthTotal = (row) => usersInYear.reduce((s, u) => s + (row[u] || 0), 0);
+    const firstIdx = monthlyDataFull.findIndex(row => monthTotal(row) > 0);
+    if (firstIdx === -1) return monthlyDataFull;
+    let lastIdx = monthlyDataFull.length - 1;
+    while (lastIdx > firstIdx && monthTotal(monthlyDataFull[lastIdx]) === 0) lastIdx--;
+    return monthlyDataFull.slice(firstIdx, lastIdx + 1);
+  }, [monthlyDataFull, usersInYear]);
 
   const userTotals = useMemo(() => {
     const map = new Map();
