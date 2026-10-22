@@ -659,11 +659,13 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
       const key = `${t.year || new Date(t.date).getFullYear()}-${String(t.month || new Date(t.date).getMonth() + 1).padStart(2, '0')}`;
       const label = new Date(t.date).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
       if (!map.has(key)) map.set(key, { label, items: [], total: 0 });
+      // A related expense counts toward its parent month's total too, not just the parent's own amount.
+      const childSum = getChildrenOf(allTxns, t.id).reduce((s, c) => s + (c.amount || 0), 0);
       map.get(key).items.push(t);
-      map.get(key).total += t.amount || 0;
+      map.get(key).total += (t.amount || 0) + childSum;
     });
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [transactions]);
+  }, [transactions, allTxns]);
 
   return (
     <div className="timeline-wrap">
@@ -1055,20 +1057,26 @@ const RecentActivityPanel = ({ allTxns, onOpenInfo }) => {
       .map(x => x.t);
   }, [allTxns]);
 
+  // Counts AND sums every transaction saved that day — parent and child alike,
+  // since a related expense is just as much "saved on that date" as its parent.
   const dailyCounts = useMemo(() => {
-    const counts = new Map();
+    const stats = new Map();
     allTxns.forEach(t => {
       const activityAt = t.updatedAt || t.createdAt;
       if (!activityAt) return;
       const dateKey = String(activityAt).split('T')[0];
-      counts.set(dateKey, (counts.get(dateKey) || 0) + 1);
+      const prev = stats.get(dateKey) || { count: 0, total: 0 };
+      prev.count += 1;
+      prev.total += t.amount || 0;
+      stats.set(dateKey, prev);
     });
     const days = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
       const key = d.toISOString().split('T')[0];
-      days.push({ key, count: counts.get(key) || 0 });
+      const s = stats.get(key) || { count: 0, total: 0 };
+      days.push({ key, count: s.count, total: s.total });
     }
     return days;
   }, [allTxns]);
@@ -1097,10 +1105,13 @@ const RecentActivityPanel = ({ allTxns, onOpenInfo }) => {
         <div className="recent-activity-days">
           <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--muted)', marginBottom: 6 }}>Saved in last 7 days</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {dailyCounts.map(({ key, count }) => (
-              <div key={key} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, opacity: count === 0 ? 0.5 : 1 }}>
+            {dailyCounts.map(({ key, count, total }) => (
+              <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, fontSize: 12, opacity: count === 0 ? 0.5 : 1 }}>
                 <span>{formatDate(key)}</span>
-                <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
+                <span style={{ textAlign: 'right' }}>
+                  <span className="mono" style={{ fontWeight: 600 }}>{count}</span>
+                  {count > 0 && <span className="mono" style={{ color: 'var(--muted)', marginLeft: 6, fontSize: 11 }}>₹{formatINR(total)}</span>}
+                </span>
               </div>
             ))}
           </div>
@@ -1126,6 +1137,7 @@ const TransactionDetails = ({ onAddEntry }) => {
   const [showFilters, setShowFilters] = useState(false);
   const [viewMode, setViewMode] = useState('table'); // 'table' | 'timeline'
   const [showExport, setShowExport] = useState(false);
+  const [showRecentActivity, setShowRecentActivity] = useState(false);
   const emptyFilters = { dateFrom: '', dateTo: '', paidBy: '', mode: '', amountMin: '', amountMax: '' };
   const [filters, setFilters] = useState(emptyFilters);
 
@@ -1221,7 +1233,13 @@ const TransactionDetails = ({ onAddEntry }) => {
     return true;
   }), [sortedTopLevel, search, filters, txns]);
 
-  const filteredTotal = useMemo(() => filtered.reduce((s, t) => s + (t.amount || 0), 0), [filtered]);
+  // Matches a parent's own amount with every one of its related expenses, not just
+  // the parent — so this total agrees with the per-row "combined total" badges and
+  // with the Dashboard, instead of silently dropping every child's amount.
+  const filteredTotal = useMemo(() => filtered.reduce((s, t) => {
+    const childSum = getChildrenOf(txns, t.id).reduce((cs, c) => cs + (c.amount || 0), 0);
+    return s + (t.amount || 0) + childSum;
+  }, 0), [filtered, txns]);
 
   const handleDelete = async (txn) => {
     if (!isAdmin) return;
@@ -1328,6 +1346,9 @@ const TransactionDetails = ({ onAddEntry }) => {
           <h2>Transaction Details</h2>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className={`btn ${showRecentActivity ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setShowRecentActivity(s => !s)} style={{ padding: '10px 14px' }} title="Recent Activity">
+            <Info size={14} /> Recent Activity
+          </button>
           <button className="btn btn-ghost" onClick={() => setShowExport(true)} style={{ padding: '10px 14px' }}>
             <Download size={14} /> Export
           </button>
@@ -1335,7 +1356,7 @@ const TransactionDetails = ({ onAddEntry }) => {
         </div>
       </div>
 
-      <RecentActivityPanel allTxns={txns} onOpenInfo={setInfo} />
+      {showRecentActivity && <RecentActivityPanel allTxns={txns} onOpenInfo={setInfo} />}
 
       <div className="txn-toolbar">
         <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
