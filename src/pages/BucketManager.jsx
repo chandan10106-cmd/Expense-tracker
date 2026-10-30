@@ -80,7 +80,11 @@ const BucketManager = () => {
     setSaving(true);
     try {
       const ref = await addDoc(collection(db, 'buckets'), { name: newName.trim(), description: newDesc.trim(), color: newColor, members: [], createdBy: user.uid, createdByName: profile?.name || user.email, createdAt: new Date().toISOString() });
-      setBuckets(prev => [...prev, { id: ref.id, name: newName.trim(), description: newDesc.trim(), color: newColor, members: [] }]);
+      const newBucket = { id: ref.id, name: newName.trim(), description: newDesc.trim(), color: newColor, members: [] };
+      setBuckets(prev => [...prev, newBucket]);
+      // Keep the shared 'buckets:all' cache in sync so the bucket-picker screen (and
+      // a re-mount of this panel) see it immediately instead of a stale cached list.
+      cache.updateCache('buckets:all', prev => [...(prev || []), newBucket]);
       setNewName(''); setNewDesc(''); setNewColor(BUCKET_COLORS[0]); setCreating(false);
     } catch (e) { alert('Failed: ' + e.message); }
     finally { setSaving(false); }
@@ -88,13 +92,22 @@ const BucketManager = () => {
 
   const handleDelete = async (bucket) => {
     if (!confirm(`Delete bucket "${bucket.name}"?\n\nTransactions will NOT be deleted but become unassigned.`)) return;
-    try { await deleteDoc(doc(db, 'buckets', bucket.id)); setBuckets(prev => prev.filter(b => b.id !== bucket.id)); }
+    try {
+      await deleteDoc(doc(db, 'buckets', bucket.id));
+      setBuckets(prev => prev.filter(b => b.id !== bucket.id));
+      cache.updateCache('buckets:all', prev => (prev || []).filter(b => b.id !== bucket.id));
+    }
     catch (e) { alert('Failed: ' + e.message); }
   };
 
   const handleUpdateMembers = async (bucket, newMembers) => {
     setSaving(true);
-    try { await updateDoc(doc(db, 'buckets', bucket.id), { members: newMembers }); setBuckets(prev => prev.map(b => b.id === bucket.id ? { ...b, members: newMembers } : b)); setEditingMembers(null); }
+    try {
+      await updateDoc(doc(db, 'buckets', bucket.id), { members: newMembers });
+      setBuckets(prev => prev.map(b => b.id === bucket.id ? { ...b, members: newMembers } : b));
+      cache.updateCache('buckets:all', prev => (prev || []).map(b => b.id === bucket.id ? { ...b, members: newMembers } : b));
+      setEditingMembers(null);
+    }
     catch (e) { alert('Failed: ' + e.message); }
     finally { setSaving(false); }
   };
@@ -182,7 +195,9 @@ const BucketManager = () => {
               }));
               // reload buckets
               const bsnap = await getDocs(collection(db, 'buckets'));
-              setBuckets(bsnap.docs.map(d => ({ id: d.id, ...d.data() })));
+              const freshBuckets = bsnap.docs.map(d => ({ id: d.id, ...d.data() }));
+              setBuckets(freshBuckets);
+              cache.invalidateCache('buckets:all');
               setManageUserMembership(null);
             } catch (e) { alert('Failed: ' + e.message); }
             finally { setSavingUserMembership(false); }

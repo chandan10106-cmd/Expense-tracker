@@ -46,6 +46,10 @@ const BucketPicker = () => {
       });
       const newBucket = { id: ref.id, name: newName.trim(), description: newDesc.trim(), color: newColor, members: [] };
       setBuckets(prev => [...prev, newBucket]);
+      // Keep the shared 'buckets:all' cache in sync — otherwise the next mount
+      // (a refresh, or re-opening this picker) reads the stale pre-creation list
+      // and the new bucket appears to "vanish".
+      cache.updateCache('buckets:all', prev => [...(prev || []), newBucket]);
       setNewName(''); setNewDesc(''); setNewColor(BUCKET_COLORS[0]); setShowCreate(false);
     } catch (e) { alert('Failed: ' + e.message); }
     finally { setSaving(false); }
