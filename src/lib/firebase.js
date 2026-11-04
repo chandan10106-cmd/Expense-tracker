@@ -5,7 +5,7 @@
 
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyBpD7WqQQ5YDwsw4CZFbPqriNHQEaccy_4",
@@ -20,7 +20,13 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Persistent (IndexedDB) cache: a write that hasn't reached the server yet is
+// stored on the device, survives closing/refreshing the tab, and is re-sent
+// automatically the next time the app opens — so nothing saved in the UI is lost.
+// Falls back to an in-memory cache where IndexedDB isn't available.
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
 
 export const PRIMARY_ADMIN_EMAILS = [
   'chandan10106@gmail.com',

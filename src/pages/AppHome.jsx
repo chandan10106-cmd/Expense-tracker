@@ -3,14 +3,41 @@ import { signOut } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
-import { TransactionsProvider } from '../lib/TransactionsContext';
+import { TransactionsProvider, useTransactions } from '../lib/TransactionsContext';
 import { collection, getDocs } from 'firebase/firestore';
 import UpdateDetails from './UpdateDetails';
 import Dashboard from './Dashboard';
 import TransactionDetails from './TransactionDetails';
 import AdminPanel from './AdminPanel';
 import PendingApproval from './PendingApproval';
-import { LogOut, FilePlus, BarChart3, Receipt, Users, ChevronDown, Folder, WifiOff } from 'lucide-react';
+import { LogOut, FilePlus, BarChart3, Receipt, Users, ChevronDown, Folder, WifiOff, CloudUpload, CheckCircle2 } from 'lucide-react';
+
+// Shows whether changes made in the app have actually reached the server yet:
+// "Saving…" while any are unconfirmed, then a brief "All changes saved".
+const SyncStatus = () => {
+  const { pendingWrites } = useTransactions();
+  const [justSaved, setJustSaved] = useState(false);
+  const [hadPending, setHadPending] = useState(false);
+
+  useEffect(() => {
+    if (pendingWrites > 0) { setHadPending(true); setJustSaved(false); return; }
+    if (!hadPending) return;
+    setHadPending(false); setJustSaved(true);
+    const t = setTimeout(() => setJustSaved(false), 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingWrites]);
+
+  if (pendingWrites === 0 && !justSaved) return null;
+  const saving = pendingWrites > 0;
+  return (
+    <div style={{ position: 'sticky', top: 'env(safe-area-inset-top, 0px)', zIndex: 50, background: saving ? '#6b6357' : 'var(--green, #2f6b3a)', color: '#f4ede0', padding: '8px 16px', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', borderRadius: 6, marginBottom: 12 }}>
+      {saving
+        ? <><CloudUpload size={14} /> Saving {pendingWrites} change{pendingWrites !== 1 ? 's' : ''} to the server… keep this page open</>
+        : <><CheckCircle2 size={14} /> All changes saved</>}
+    </div>
+  );
+};
 
 const AppHome = () => {
   const { user, profile, isAdmin, isApproved } = useAuth();
@@ -91,6 +118,7 @@ const AppHome = () => {
             (just hidden) once visited, so switching between them is instant instead of
             re-fetching and re-rendering a fresh loading state every time. */}
         <TransactionsProvider>
+          <SyncStatus />
           <div hidden={tab !== 'dashboard'}><Dashboard onAddEntry={() => setTab('update')} /></div>
           <div hidden={tab !== 'update'}><UpdateDetails onSaved={() => setTab('transactions')} /></div>
           <div hidden={tab !== 'transactions'}><TransactionDetails onAddEntry={() => setTab('update')} /></div>

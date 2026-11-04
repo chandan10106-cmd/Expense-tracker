@@ -27,13 +27,17 @@ function _writeLS(key, value, ttl) {
   } catch (e) { /* ignore */ }
 }
 
-export async function fetchWithCache(key, fetcher, ttl = 1000 * 60 * 5) {
+// `persist: false` keeps a key in memory only — used for data that is patched
+// optimistically, so a snapshot holding a not-yet-confirmed write is never
+// shown again on a later visit as if it had been saved.
+export async function fetchWithCache(key, fetcher, ttl = 1000 * 60 * 5, { persist = true } = {}) {
   // try mem
   const m = mem.get(key);
   if (m && m.expires > now()) return m.value;
 
   // try localStorage
-  const ls = _readLS(key);
+  if (!persist) { try { localStorage.removeItem(key); } catch (e) {} }
+  const ls = persist ? _readLS(key) : null;
   if (ls) {
     mem.set(key, { value: ls, expires: now() + ttl });
     return ls;
@@ -46,7 +50,7 @@ export async function fetchWithCache(key, fetcher, ttl = 1000 * 60 * 5) {
   const value = await fetcher();
   if (versionOf(key) === versionAtStart) {
     mem.set(key, { value, expires: now() + ttl });
-    try { _writeLS(key, value, ttl); } catch (e) {}
+    if (persist) { try { _writeLS(key, value, ttl); } catch (e) {} }
   }
   return value;
 }
@@ -63,9 +67,9 @@ export function invalidateCache(key) {
 // `updater` receives the previous cached value (or undefined if nothing was
 // cached yet) and returns the new value to store. Returns the new value, or
 // undefined if there was nothing cached and the updater wasn't called.
-export function updateCache(key, updater, ttl = 1000 * 60 * 5) {
+export function updateCache(key, updater, ttl = 1000 * 60 * 5, { persist = true } = {}) {
   const m = mem.get(key);
-  const ls = m ? m.value : _readLS(key);
+  const ls = m ? m.value : (persist ? _readLS(key) : null);
   bump(key);
   if (ls === null || ls === undefined) {
     // Nothing cached yet — nothing to patch locally. The next fetchWithCache
@@ -74,7 +78,7 @@ export function updateCache(key, updater, ttl = 1000 * 60 * 5) {
   }
   const next = updater(ls);
   mem.set(key, { value: next, expires: now() + ttl });
-  try { _writeLS(key, next, ttl); } catch (e) {}
+  if (persist) { try { _writeLS(key, next, ttl); } catch (e) {} }
   return next;
 }
 

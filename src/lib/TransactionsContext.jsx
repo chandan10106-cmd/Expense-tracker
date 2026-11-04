@@ -49,7 +49,7 @@ export const TransactionsProvider = ({ children }) => {
       const key = `txns:bucket:${activeBucket.id}`;
       if (bypassCache) cache.invalidateCache(key);
       const [all, users] = await Promise.all([
-        cache.fetchWithCache(key, () => fetchAllTxns(activeBucket.id), TXN_TTL),
+        cache.fetchWithCache(key, () => fetchAllTxns(activeBucket.id), TXN_TTL, { persist: false }),
         cache.fetchWithCache('users:all-approved', fetchAllApprovedUsers, USERS_TTL)
       ]);
       setTxns(all);
@@ -76,7 +76,7 @@ export const TransactionsProvider = ({ children }) => {
   // the "saved but it won't show up until I refresh" symptom.
   const patchCache = useCallback((updater) => {
     if (!txnKey) return;
-    cache.updateCache(txnKey, updater, TXN_TTL);
+    cache.updateCache(txnKey, updater, TXN_TTL, { persist: false });
   }, [txnKey]);
 
   const applyAdd = useCallback((txn) => {
@@ -96,9 +96,38 @@ export const TransactionsProvider = ({ children }) => {
 
   const reload = useCallback(() => load(true), [load]);
 
+  // Writes are applied to the UI immediately and confirmed by the server in the
+  // background. `pendingWrites` counts the ones not yet confirmed so the app can
+  // show "Saving…" and warn before the tab is closed; if the server rejects one,
+  // `onFail` rolls the UI back and the user is told.
+  const [pendingWrites, setPendingWrites] = useState(0);
+  const [lastWriteError, setLastWriteError] = useState(null);
+  const trackWrite = useCallback((promise, { label, onFail } = {}) => {
+    setPendingWrites(n => n + 1);
+    promise
+      .then(() => setLastWriteError(null))
+      .catch(err => {
+        console.error(err);
+        if (onFail) onFail(err);
+        const msg = `${label || 'A change'} could not be saved: ${err.message || err}`;
+        setLastWriteError(msg);
+        alert(msg);
+      })
+      .finally(() => setPendingWrites(n => n - 1));
+    return promise;
+  }, []);
+
+  useEffect(() => {
+    if (pendingWrites === 0) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [pendingWrites]);
+
   const value = {
     txns, loading, approvedUsers,
-    applyAdd, applyUpdate, applyRemove, reload
+    applyAdd, applyUpdate, applyRemove, reload,
+    trackWrite, pendingWrites, lastWriteError
   };
 
   return <TransactionsContext.Provider value={value}>{children}</TransactionsContext.Provider>;

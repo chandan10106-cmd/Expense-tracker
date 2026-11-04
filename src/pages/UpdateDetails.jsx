@@ -15,7 +15,7 @@ import { Upload, CheckCircle2, X, AlertTriangle } from 'lucide-react';
 const UpdateDetails = ({ onSaved }) => {
   const { user, profile } = useAuth();
   const { activeBucket } = useBucket();
-  const { approvedUsers, applyAdd, applyRemove } = useTransactions();
+  const { approvedUsers, applyAdd, applyRemove, trackWrite } = useTransactions();
 
   const today = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState(today);
@@ -127,12 +127,9 @@ const UpdateDetails = ({ onSaved }) => {
       } else {
         data = { ...baseData, isSplit: false, mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email };
       }
-      // Not awaited: Firestore applies the write locally right away and syncs it
-      // in the background, so a slow/stalled connection can't freeze the form.
-      setDoc(ref, data).catch(err => {
-        applyRemove(ref.id);
-        alert(`${txnId} could not be saved: ${err.message || err}`);
-      });
+      // Not awaited: the write is stored on the device right away and confirmed by
+      // the server in the background (see trackWrite), so the form never freezes.
+      trackWrite(setDoc(ref, data), { label: txnId, onFail: () => applyRemove(ref.id) });
       applyAdd({ id: ref.id, ...data });
 
       setAmount(''); setDescription(''); setMode(''); setProofFiles([]); setDate(today);

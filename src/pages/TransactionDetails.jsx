@@ -337,6 +337,7 @@ const InfoModal = ({ txn, childrenList, onClose, onViewProofs, onTogglePin }) =>
 
 const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
   const { user } = useAuth();
+  const { trackWrite, applyUpdate } = useTransactions();
   const existingProofs = getProofsArray(txn);
   const isSplitTxn = txn.isSplit && Array.isArray(txn.splitDetails);
   const [date, setDate] = useState(txn.date || '');
@@ -376,10 +377,13 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
         updates.paidByName = selectedUser.name || selectedUser.email || txn.paidByName;
         updates.paidByEmail = selectedUser.email || txn.paidByEmail;
       }
-      // Not awaited: Firestore applies the write locally right away and syncs it
-      // in the background, so a slow/stalled connection can't freeze the modal.
-      updateDoc(doc(db, 'transactions', txn.id), updates)
-        .catch(err => alert(`Changes to ${txn.txnId} could not be saved: ${err.message || err}`));
+      // Not awaited: the write is stored on the device right away and confirmed by
+      // the server in the background (see trackWrite), so the modal never freezes.
+      const previous = { ...txn };
+      trackWrite(updateDoc(doc(db, 'transactions', txn.id), updates), {
+        label: `Changes to ${txn.txnId}`,
+        onFail: () => applyUpdate(txn.id, previous)
+      });
       onSaved({ ...txn, ...updates });
     } catch (err) { setError(err.message || 'Failed to save'); }
     finally { setSaving(false); }
@@ -481,7 +485,7 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const { applyRemove } = useTransactions();
+  const { applyRemove, trackWrite } = useTransactions();
 
   const split = useSplitPayment({ amount, setAmount, user });
   const { isSplit, splitTotal, validateSplit, markInvalid, buildSplitData, handleAmountChange } = split;
@@ -524,12 +528,9 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
       } else {
         data = { ...baseData, isSplit: false, mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email };
       }
-      // Not awaited: Firestore applies the write locally right away and syncs it
-      // in the background, so a slow/stalled connection can't freeze the modal.
-      setDoc(ref, data).catch(err => {
-        applyRemove(ref.id);
-        alert(`${txnId} could not be saved: ${err.message || err}`);
-      });
+      // Not awaited: the write is stored on the device right away and confirmed by
+      // the server in the background (see trackWrite), so the modal never freezes.
+      trackWrite(setDoc(ref, data), { label: txnId, onFail: () => applyRemove(ref.id) });
       onCreated({ id: ref.id, ...data });
     } catch (err) { setError(err.message || 'Failed to save'); }
     finally { setSaving(false); }
@@ -1164,7 +1165,7 @@ const RecentActivityPanel = ({ allTxns, onOpenInfo }) => {
 const TransactionDetails = ({ onAddEntry }) => {
   const { user, profile, isAdmin } = useAuth();
   const { activeBucket } = useBucket();
-  const { txns, loading, approvedUsers, applyAdd, applyUpdate, applyRemove } = useTransactions();
+  const { txns, loading, approvedUsers, applyAdd, applyUpdate, applyRemove, trackWrite } = useTransactions();
   const [search, setSearch] = useState('');
   const [viewing, setViewing] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -1228,18 +1229,26 @@ const TransactionDetails = ({ onAddEntry }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, filters]);
 
-  const recomputeParentTotals = async (parentId, currentTxns) => {
+  // Applies `updates` to the UI immediately and lets the server confirm in the
+  // background (see trackWrite); if the server rejects it, the changed fields are
+  // put back to what they were so the screen never shows an unsaved state.
+  const writeTxnUpdate = (txn, updates, label) => {
+    const previous = Object.fromEntries(Object.keys(updates).map(k => [k, txn[k] ?? null]));
+    applyUpdate(txn.id, updates);
+    return trackWrite(updateDoc(doc(db, 'transactions', txn.id), updates), {
+      label: label || `Changes to ${txn.txnId}`,
+      onFail: () => applyUpdate(txn.id, previous)
+    });
+  };
+
+  const recomputeParentTotals = (parentId, currentTxns) => {
     const parent = currentTxns.find(t => t.id === parentId);
     if (!parent) return;
     const children = getChildrenOf(currentTxns, parentId);
     const childCount = children.length;
     const childTotal = children.reduce((s, c) => s + (c.amount || 0), 0);
     const combinedTotal = childCount > 0 ? (parent.amount || 0) + childTotal : 0;
-    const updates = { childCount, childTotal, combinedTotal };
-    try {
-      await updateDoc(doc(db, 'transactions', parentId), updates);
-      applyUpdate(parentId, updates);
-    } catch (e) { console.error(e); }
+    writeTxnUpdate(parent, { childCount, childTotal, combinedTotal }, `Totals for ${parent.txnId}`);
   };
 
   // Scans every transaction, not just top-level ones, so someone who only ever
@@ -1285,19 +1294,15 @@ const TransactionDetails = ({ onAddEntry }) => {
       if (kids.length > 0) { alert(`${txn.txnId} has ${kids.length} related expense(s) linked to it. Delete or reassign those first.`); return; }
     }
     if (!confirm(`Delete ${txn.txnId}?\n\n${getDescription(txn)}\n₹${formatINR(txn.amount)} on ${formatDate(txn.date)}\n\nTransaction will be moved to the Recycle Bin.`)) return;
-    setDeleting(txn.id);
-    try {
-      await updateDoc(doc(db, 'transactions', txn.id), {
-        deleted: true,
-        deletedAt: new Date().toISOString(),
-        deletedBy: user.uid,
-        deletedByName: profile?.name || user.email
-      });
-      const nextTxns = txns.filter(t => t.id !== txn.id);
-      applyRemove(txn.id);
-      if (txn.isChild && txn.parentId) await recomputeParentTotals(txn.parentId, nextTxns);
-    } catch (e) { alert('Failed: ' + e.message); }
-    finally { setDeleting(null); }
+    const nextTxns = txns.filter(t => t.id !== txn.id);
+    applyRemove(txn.id);
+    trackWrite(updateDoc(doc(db, 'transactions', txn.id), {
+      deleted: true,
+      deletedAt: new Date().toISOString(),
+      deletedBy: user.uid,
+      deletedByName: profile?.name || user.email
+    }), { label: `Deleting ${txn.txnId}`, onFail: () => applyAdd(txn) });
+    if (txn.isChild && txn.parentId) recomputeParentTotals(txn.parentId, nextTxns);
   };
 
   const handleSaved = (updated) => {
@@ -1318,59 +1323,39 @@ const TransactionDetails = ({ onAddEntry }) => {
   };
 
   const toggleFavorite = async (txn) => {
-    try {
-      const updates = {
-        isFavorite: !txn.isFavorite,
-        favoriteByUid: !txn.isFavorite ? user.uid : null,
-        favoriteByName: !txn.isFavorite ? (profile?.name || user?.displayName || user?.email) : null,
-        favoriteAt: !txn.isFavorite ? new Date().toISOString() : null
-      };
-      await updateDoc(doc(db, 'transactions', txn.id), updates);
-      applyUpdate(txn.id, updates);
-    } catch (e) {
-      alert('Failed to update favorite: ' + (e.message || e));
-    }
+    const updates = {
+      isFavorite: !txn.isFavorite,
+      favoriteByUid: !txn.isFavorite ? user.uid : null,
+      favoriteByName: !txn.isFavorite ? (profile?.name || user?.displayName || user?.email) : null,
+      favoriteAt: !txn.isFavorite ? new Date().toISOString() : null
+    };
+    writeTxnUpdate(txn, updates, `Favorite on ${txn.txnId}`);
   };
 
   const togglePin = async (txn) => {
-    try {
-      const updates = {
-        isPinned: !txn.isPinned,
-        pinnedAt: !txn.isPinned ? new Date().toISOString() : null
-      };
-      await updateDoc(doc(db, 'transactions', txn.id), updates);
-      applyUpdate(txn.id, updates);
-    } catch (e) {
-      alert('Failed to update pin: ' + (e.message || e));
-    }
+    const updates = {
+      isPinned: !txn.isPinned,
+      pinnedAt: !txn.isPinned ? new Date().toISOString() : null
+    };
+    writeTxnUpdate(txn, updates, `Pin on ${txn.txnId}`);
   };
 
   const linkTxnToFavorite = async (txn, parent) => {
-    try {
-      const updates = { isChild: true, parentId: parent.id, parentTxnId: parent.txnId, updatedAt: new Date().toISOString() };
-      await updateDoc(doc(db, 'transactions', txn.id), updates);
-      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, ...updates } : t);
-      applyUpdate(txn.id, updates);
-      setLinkToFavoriteFor(null);
-      recomputeParentTotals(parent.id, nextTxns);
-    } catch (e) {
-      alert('Failed to link transaction: ' + (e.message || e));
-    }
+    const updates = { isChild: true, parentId: parent.id, parentTxnId: parent.txnId, updatedAt: new Date().toISOString() };
+    const nextTxns = txns.map(t => t.id === txn.id ? { ...t, ...updates } : t);
+    writeTxnUpdate(txn, updates, `Linking ${txn.txnId}`);
+    setLinkToFavoriteFor(null);
+    recomputeParentTotals(parent.id, nextTxns);
   };
 
   const removeChildFromParent = async (txn) => {
     if (!txn || !txn.isChild) return;
     if (!confirm(`Unlink ${txn.txnId} from ${txn.parentTxnId || 'its parent'}?\n\nIt will become a standalone transaction.`)) return;
     const prevParentId = txn.parentId;
-    try {
-      const updates = { isChild: false, parentId: null, parentTxnId: null, updatedAt: new Date().toISOString() };
-      await updateDoc(doc(db, 'transactions', txn.id), updates);
-      const nextTxns = txns.map(t => t.id === txn.id ? { ...t, ...updates } : t);
-      applyUpdate(txn.id, updates);
-      if (prevParentId) await recomputeParentTotals(prevParentId, nextTxns);
-    } catch (e) {
-      alert('Failed to remove related expense: ' + (e.message || e));
-    }
+    const updates = { isChild: false, parentId: null, parentTxnId: null, updatedAt: new Date().toISOString() };
+    const nextTxns = txns.map(t => t.id === txn.id ? { ...t, ...updates } : t);
+    writeTxnUpdate(txn, updates, `Unlinking ${txn.txnId}`);
+    if (prevParentId) recomputeParentTotals(prevParentId, nextTxns);
   };
 
   if (loading) return <div className="loading-shell"><div className="spinner"></div></div>;
