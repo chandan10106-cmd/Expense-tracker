@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
@@ -15,7 +15,7 @@ import { Upload, CheckCircle2, X, AlertTriangle } from 'lucide-react';
 const UpdateDetails = ({ onSaved }) => {
   const { user, profile } = useAuth();
   const { activeBucket } = useBucket();
-  const { approvedUsers, applyAdd } = useTransactions();
+  const { approvedUsers, applyAdd, applyRemove } = useTransactions();
 
   const today = new Date().toISOString().split('T')[0];
   const [date, setDate] = useState(today);
@@ -104,6 +104,7 @@ const UpdateDetails = ({ onSaved }) => {
       let proofs = [];
       if (proofFiles.length > 0) proofs = await processProofFiles(proofFiles);
       const { sequence, id: txnId } = await getNextTxnId();
+      const ref = doc(collection(db, 'transactions'));
       const finalAmount = isSplit ? splitTotal : parseToNumber(amount);
 
       const baseData = {
@@ -126,7 +127,12 @@ const UpdateDetails = ({ onSaved }) => {
       } else {
         data = { ...baseData, isSplit: false, mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email };
       }
-      const ref = await addDoc(collection(db, 'transactions'), data);
+      // Not awaited: Firestore applies the write locally right away and syncs it
+      // in the background, so a slow/stalled connection can't freeze the form.
+      setDoc(ref, data).catch(err => {
+        applyRemove(ref.id);
+        alert(`${txnId} could not be saved: ${err.message || err}`);
+      });
       applyAdd({ id: ref.id, ...data });
 
       setAmount(''); setDescription(''); setMode(''); setProofFiles([]); setDate(today);

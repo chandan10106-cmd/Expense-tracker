@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, Fragment } from 'react';
-import { collection, doc, updateDoc, addDoc } from 'firebase/firestore';
+import { collection, doc, updateDoc, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
@@ -120,11 +120,15 @@ const txnMatchesAll = (t, searchLower, filters) => txnMatchesSearch(t, searchLow
 // search/filter, that's every child; while one is active, only the children that
 // themselves match — so expanding a parent that only matched because of one child
 // (a different payer, a different date, …) doesn't dump every unrelated sibling
-// into view too.
+// into view too. When the search term matches the parent itself, though, every
+// child belongs to that hit, so the search no longer narrows them — only the
+// date/paid-by/mode/amount filters do.
 const getVisibleChildren = (allTxns, parentId, searchLower, filters) => {
   const children = getChildrenOf(allTxns, parentId);
   if (!searchLower && !hasActiveFilters(filters)) return children;
-  return children.filter(c => txnMatchesAll(c, searchLower, filters));
+  const parent = allTxns.find(t => t.id === parentId);
+  const childSearch = parent && txnMatchesSearch(parent, searchLower) ? '' : searchLower;
+  return children.filter(c => txnMatchesAll(c, childSearch, filters));
 };
 
 const formatPaidBy = (t) => {
@@ -372,7 +376,10 @@ const EditModal = ({ txn, onClose, onSaved, approvedUsers }) => {
         updates.paidByName = selectedUser.name || selectedUser.email || txn.paidByName;
         updates.paidByEmail = selectedUser.email || txn.paidByEmail;
       }
-      await updateDoc(doc(db, 'transactions', txn.id), updates);
+      // Not awaited: Firestore applies the write locally right away and syncs it
+      // in the background, so a slow/stalled connection can't freeze the modal.
+      updateDoc(doc(db, 'transactions', txn.id), updates)
+        .catch(err => alert(`Changes to ${txn.txnId} could not be saved: ${err.message || err}`));
       onSaved({ ...txn, ...updates });
     } catch (err) { setError(err.message || 'Failed to save'); }
     finally { setSaving(false); }
@@ -474,6 +481,7 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
   const [files, setFiles] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { applyRemove } = useTransactions();
 
   const split = useSplitPayment({ amount, setAmount, user });
   const { isSplit, splitTotal, validateSplit, markInvalid, buildSplitData, handleAmountChange } = split;
@@ -495,6 +503,7 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
       let proofs = [];
       if (files.length > 0) proofs = await processProofFiles(files);
       const { sequence, id: txnId } = await getNextTxnId();
+      const ref = doc(collection(db, 'transactions'));
       const parsedDate = new Date(date);
       const finalAmount = isSplit ? splitTotal : parseToNumber(amount);
       const baseData = {
@@ -515,7 +524,12 @@ const AddChildModal = ({ parent, approvedUsers, user, profile, activeBucket, onC
       } else {
         data = { ...baseData, isSplit: false, mode, paidByUid: selectedUser.id, paidByName: selectedUser.name || selectedUser.email, paidByEmail: selectedUser.email };
       }
-      const ref = await addDoc(collection(db, 'transactions'), data);
+      // Not awaited: Firestore applies the write locally right away and syncs it
+      // in the background, so a slow/stalled connection can't freeze the modal.
+      setDoc(ref, data).catch(err => {
+        applyRemove(ref.id);
+        alert(`${txnId} could not be saved: ${err.message || err}`);
+      });
       onCreated({ id: ref.id, ...data });
     } catch (err) { setError(err.message || 'Failed to save'); }
     finally { setSaving(false); }
@@ -1203,8 +1217,11 @@ const TransactionDetails = ({ onAddEntry }) => {
       const next = new Set(prev);
       topLevel.forEach(t => {
         if (next.has(t.id)) return;
-        if (txnMatchesAll(t, s, filters)) return;
-        if (getChildrenOf(txns, t.id).some(c => txnMatchesAll(c, s, filters))) { next.add(t.id); changed = true; }
+        // A search hit on the parent itself also expands it, so all of its
+        // related expenses show under it straight away.
+        const parentSearchHit = s && txnMatchesSearch(t, s);
+        if (!parentSearchHit && txnMatchesAll(t, s, filters)) return;
+        if (getVisibleChildren(txns, t.id, s, filters).length > 0) { next.add(t.id); changed = true; }
       });
       return changed ? next : prev;
     });
