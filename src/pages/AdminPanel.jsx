@@ -3,8 +3,9 @@ import { collection, getDocs, updateDoc, doc, arrayUnion, arrayRemove } from 'fi
 import cache from '../lib/cache';
 import { db, isPrimaryAdmin } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
-import { Check, X, ShieldCheck, ShieldOff, Clock, Crown, RefreshCw, Folder, Trash2, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Check, X, ShieldCheck, ShieldOff, Clock, Crown, RefreshCw, Folder, Trash2, RotateCcw, AlertTriangle, Wallet } from 'lucide-react';
 import BucketManager from './BucketManager';
+import TopupManager from './TopupManager';
 
 const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }); } catch { return d; } };
 const formatDateTime = (d) => { try { return new Date(d).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return d; } };
@@ -224,12 +225,16 @@ const AdminPanel = ({ onPendingChange }) => {
             <Folder size={13} />Buckets
           </button>
         )}
+        <button style={tabBtnStyle(adminTab === 'topups')} onClick={() => setAdminTab('topups')}>
+          <Wallet size={13} />Top-ups
+        </button>
         <button style={tabBtnStyle(adminTab === 'bin')} onClick={() => setAdminTab('bin')}>
           <Trash2 size={13} />Recycle Bin
         </button>
       </div>
 
       {adminTab === 'buckets' && isPrimary && <BucketManager />}
+      {adminTab === 'topups' && <TopupManager />}
       {adminTab === 'bin' && <RecycleBin />}
 
       {adminTab === 'users' && (

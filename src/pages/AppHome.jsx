@@ -122,8 +122,8 @@ const AppHome = () => {
           <div hidden={tab !== 'dashboard'}><Dashboard onAddEntry={() => setTab('update')} /></div>
           <div hidden={tab !== 'update'}><UpdateDetails onSaved={() => setTab('transactions')} /></div>
           <div hidden={tab !== 'transactions'}><TransactionDetails onAddEntry={() => setTab('update')} /></div>
+          {tab === 'admin' && isAdmin && <AdminPanel onPendingChange={setPendingCount} />}
         </TransactionsProvider>
-        {tab === 'admin' && isAdmin && <AdminPanel onPendingChange={setPendingCount} />}
       </main>
 
       {/* Mobile bottom nav */}

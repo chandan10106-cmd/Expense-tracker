@@ -249,12 +249,44 @@ const ProofViewer = ({ txn, onClose }) => {
   );
 };
 
+// "Top-up" tag: the part of this transaction its payer covered out of money
+// someone else topped them up with. The payer stays as recorded; this just says
+// who really funded it (and the Dashboard credits that amount to them).
+const TopupTag = ({ t, size = 10 }) => {
+  const { topupAllocation } = useTransactions();
+  const funded = topupAllocation.byTxn.get(t.id);
+  if (!funded || funded.length === 0) return null;
+  const byFunder = new Map();
+  funded.forEach(f => byFunder.set(f.fromName, (byFunder.get(f.fromName) || 0) + f.amount));
+  return (
+    <>
+      {[...byFunder.entries()].map(([name, amount]) => (
+        <span key={name} title={`₹${formatINR(amount)} of this was paid from a top-up given by ${name}`}
+          style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 12, fontSize: size, fontWeight: 600, background: 'rgba(74,107,58,0.12)', color: 'var(--green)', whiteSpace: 'nowrap', marginLeft: 4 }}>
+          Top-up · ₹{formatINR(amount)} from {name}
+        </span>
+      ))}
+    </>
+  );
+};
+
 const DetailRow = ({ label, value, mono }) => (
   <div className="detail-row">
     <div className="detail-label">{label}</div>
     <div className={`detail-value ${mono ? 'mono' : ''}`}>{value || <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>—</span>}</div>
   </div>
 );
+
+const TopupDetail = ({ txn }) => {
+  const { topupAllocation } = useTransactions();
+  const funded = topupAllocation.byTxn.get(txn.id);
+  if (!funded || funded.length === 0) return null;
+  return <DetailRow label="Funded by top-up" value={
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {funded.map((f, i) => <div key={i}>₹{formatINR(f.amount)} from <strong>{f.fromName}</strong> (paid by {f.recipientName})</div>)}
+    </div>
+  } />;
+};
 
 const InfoModal = ({ txn, childrenList, onClose, onViewProofs, onTogglePin }) => {
   const proofs = getProofsArray(txn);
@@ -308,6 +340,7 @@ const InfoModal = ({ txn, childrenList, onClose, onViewProofs, onTogglePin }) =>
               <DetailRow label="Mode of Payment" value={txn.mode} />
             </>
           )}
+          <TopupDetail txn={txn} />
           <DetailRow label="Description" value={<span style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{getDescription(txn)}</span>} />
           <DetailRow label="Proofs" value={proofs.length > 0 ? <button className="btn-link" onClick={() => onViewProofs(txn)} style={{ padding: 0 }}>View {proofs.length} file{proofs.length > 1 ? 's' : ''}</button> : 'No proof attached'} />
           {parentFlag && childrenList.length > 0 && (
@@ -743,7 +776,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                     <div style={{ fontSize: 14, margin: '6px 0', wordBreak: 'break-word' }}><DescriptionCell text={getDescription(t)} query={search} /></div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                       <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}><Highlight text={formatMode(t)} query={search} /></span>
-                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(t)} query={search} /></span>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(t)} query={search} /></span><TopupTag t={t} />
                     </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {proofs.length > 0
@@ -781,7 +814,7 @@ const TimelineView = ({ transactions, allTxns, expandedIds, onToggleExpand, onVi
                               <div style={{ fontSize: 13, margin: '4px 0', wordBreak: 'break-word' }}><DescriptionCell text={getDescription(c)} query={search} /></div>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <span className={`mode-pill ${(c.mode || '').toLowerCase()}`} style={{ fontSize: 10 }}><Highlight text={c.mode} query={search} /></span>
-                                <span style={{ fontSize: 11, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(c)} query={search} /></span>
+                                <span style={{ fontSize: 11, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(c)} query={search} /></span><TopupTag t={c} />
                                 {cProofs.length > 0
                                   ? <button className="view-btn" onClick={() => onView(c)}><Eye size={11} /> View</button>
                                   : <span className="no-proof" style={{ fontSize: 10 }}>no proof</span>}
@@ -833,7 +866,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
       <div className="txn-card-row" style={{ marginTop: 6 }}>
         <div className="txn-card-meta">
           <span className={`mode-pill ${(t.mode || '').toLowerCase()}`}><Highlight text={formatMode(t)} query={search} /></span>
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(t)} query={search} /></span>
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(t)} query={search} /></span><TopupTag t={t} />
         </div>
       </div>
       <div className="txn-card-actions">
@@ -877,7 +910,7 @@ const TxnCard = ({ t, allTxns, expanded, onToggleExpand, canDelete, onView, onEd
               <div className="txn-card-row" style={{ marginTop: 4 }}>
                 <div className="txn-card-meta">
                   <span className={`mode-pill ${(c.mode || '').toLowerCase()}`}><Highlight text={formatMode(c)} query={search} /></span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(c)} query={search} /></span>
+                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>· <Highlight text={formatPaidBy(c)} query={search} /></span><TopupTag t={c} />
                 </div>
               </div>
               <div className="txn-card-actions">
@@ -915,7 +948,7 @@ const TxnRow = ({ t, isChildRow, expanded, hasChildren, onToggleExpand, onView, 
         </div>
       </td>
       <td className="mono" style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{formatDate(t.date)}</td>
-      <td style={{ maxWidth: 200 }}><Highlight text={formatPaidBy(t)} query={search} /></td>
+      <td style={{ maxWidth: 200 }}><Highlight text={formatPaidBy(t)} query={search} /><div><TopupTag t={t} /></div></td>
       <td style={{ maxWidth: 320 }}><DescriptionCell text={getDescription(t)} query={search} /></td>
       <td>
         {t.isSplit && Array.isArray(t.splitDetails)
@@ -972,13 +1005,20 @@ const ExportModal = ({ onClose, filteredTopLevel, allTxns, bucketName }) => {
   const allTopLevel = useMemo(() => allTxns.filter(t => !t.isChild), [allTxns]);
   const data = useMemo(() => buildExportRows(scope === 'filtered' ? filteredTopLevel : allTopLevel, allTxns), [scope, filteredTopLevel, allTopLevel, allTxns]);
   const filteredCount = useMemo(() => buildExportRows(filteredTopLevel, allTxns).length, [filteredTopLevel, allTxns]);
+  const { topupAllocation } = useTransactions();
+  // "Paid By" plus any part of it that came out of someone's top-up.
+  const paidByWithTopup = (t) => {
+    const funded = topupAllocation.byTxn.get(t.id) || [];
+    if (funded.length === 0) return formatPaidBy(t);
+    return `${formatPaidBy(t)} (${funded.map(f => `₹${formatINR(f.amount)} top-up from ${f.fromName}`).join(', ')})`;
+  };
 
   const exportExcel = () => {
     const rows = data.map(t => ({
       'TX ID': `${t.isChild ? '↳ ' : ''}${t.txnId || ''}`,
       'Relationship': exportRelationshipLabel(t),
       'Date': t.date,
-      'Paid By': formatPaidBy(t),
+      'Paid By': paidByWithTopup(t),
       'Description': getDescription(t),
       'Mode': formatMode(t),
       'Amount (₹)': t.amount || 0,
@@ -1027,7 +1067,7 @@ const ExportModal = ({ onClose, filteredTopLevel, allTxns, bucketName }) => {
             <td style="font-family:monospace;font-size:11px;color:#b8451f">${t.isChild ? '&nbsp;&nbsp;↳ ' : ''}${t.txnId || '—'}</td>
             <td class="relationship">${exportRelationshipLabel(t)}</td>
             <td>${formatDate(t.date)}</td>
-            <td>${formatPaidBy(t)}</td>
+            <td>${paidByWithTopup(t)}</td>
             <td>${getDescription(t)}</td>
             <td>${formatMode(t)}</td>
             <td class="amount">₹${formatINRLocal(t.amount)}</td>

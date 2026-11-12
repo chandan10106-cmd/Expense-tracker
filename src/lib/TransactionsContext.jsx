@@ -4,6 +4,7 @@ import cache from './cache';
 import { db } from './firebase';
 import { useAuth } from './AuthContext';
 import { useBucket } from './BucketContext';
+import { allocateTopups } from './topups';
 
 // Shared across Dashboard / Update Details / Transaction Details so:
 //  - all three read the exact same transaction + approved-user data (no more
@@ -28,6 +29,19 @@ const fetchAllTxns = async (bucketId) => {
   }
 };
 
+// Top-ups for one bucket. Failing here (e.g. security rules not yet updated for
+// the `topups` collection) just means no top-ups — it must never block the
+// transaction list from loading.
+const fetchBucketTopups = async (bucketId) => {
+  try {
+    const snap = await getDocs(query(collection(db, 'topups'), where('bucketId', '==', bucketId)));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(t => !t.deleted);
+  } catch (e) {
+    console.error('Could not load top-ups:', e.message || e);
+    return [];
+  }
+};
+
 const fetchAllApprovedUsers = async () => {
   const snap = await getDocs(collection(db, 'users'));
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(u => u.status === 'approved' || u.isPrimary);
@@ -39,6 +53,7 @@ export const TransactionsProvider = ({ children }) => {
   const [txns, setTxns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [allApprovedUsers, setAllApprovedUsers] = useState([]);
+  const [topups, setTopups] = useState([]);
 
   const txnKey = activeBucket?.id ? `txns:bucket:${activeBucket.id}` : null;
 
@@ -48,12 +63,14 @@ export const TransactionsProvider = ({ children }) => {
     try {
       const key = `txns:bucket:${activeBucket.id}`;
       if (bypassCache) cache.invalidateCache(key);
-      const [all, users] = await Promise.all([
+      const [all, users, bucketTopups] = await Promise.all([
         cache.fetchWithCache(key, () => fetchAllTxns(activeBucket.id), TXN_TTL, { persist: false }),
-        cache.fetchWithCache('users:all-approved', fetchAllApprovedUsers, USERS_TTL)
+        cache.fetchWithCache('users:all-approved', fetchAllApprovedUsers, USERS_TTL),
+        fetchBucketTopups(activeBucket.id)
       ]);
       setTxns(all);
       setAllApprovedUsers(users);
+      setTopups(bucketTopups);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [activeBucket]);
@@ -124,10 +141,18 @@ export const TransactionsProvider = ({ children }) => {
     return () => window.removeEventListener('beforeunload', warn);
   }, [pendingWrites]);
 
+  // Which transactions each top-up paid for — recomputed whenever either side
+  // changes, so edits on one screen re-balance every other screen instantly.
+  const topupAllocation = useMemo(() => allocateTopups(txns, topups), [txns, topups]);
+  const applyTopupAdd = useCallback((tp) => setTopups(prev => [...prev, tp]), []);
+  const applyTopupUpdate = useCallback((id, updates) => setTopups(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t)), []);
+  const applyTopupRemove = useCallback((id) => setTopups(prev => prev.filter(t => t.id !== id)), []);
+
   const value = {
     txns, loading, approvedUsers,
     applyAdd, applyUpdate, applyRemove, reload,
-    trackWrite, pendingWrites, lastWriteError
+    trackWrite, pendingWrites, lastWriteError,
+    topups, topupAllocation, applyTopupAdd, applyTopupUpdate, applyTopupRemove
   };
 
   return <TransactionsContext.Provider value={value}>{children}</TransactionsContext.Provider>;

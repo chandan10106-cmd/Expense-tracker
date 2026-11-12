@@ -3,22 +3,18 @@ import { useBucket } from '../lib/BucketContext';
 import { useTransactions } from '../lib/TransactionsContext';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
 import { Plus } from 'lucide-react';
+import { getFundedContributions, topupTotal, topupBalances } from '../lib/topups';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
 const USER_COLORS = ['#b8451f','#c9a449','#4a6b3a','#6b4d8a','#2e5a6b','#8a4a2e','#5a6b4a','#a8341e','#3d5a8a','#8a6b3d'];
 
-const getContributions = (t) => {
-  if (t.isSplit && Array.isArray(t.splitDetails) && t.splitDetails.length > 0) {
-    return t.splitDetails.map(s => ({ name: s.name || 'Unknown', email: s.email, amount: s.amount || 0 }));
-  }
-  return [{ name: t.paidByName || 'Unknown', email: t.paidByEmail, amount: t.amount || 0 }];
-};
-
 const Dashboard = ({ onAddEntry }) => {
   const currentYear = new Date().getFullYear();
   const { activeBucket } = useBucket();
-  const { txns: rawTxns, loading } = useTransactions();
+  const { txns: rawTxns, loading, topups, topupAllocation } = useTransactions();
+  // Money a recipient spent out of a top-up is credited to the funder here.
+  const getContributions = (t) => getFundedContributions(t, topupAllocation.byTxn);
   const [year, setYear] = useState(currentYear);
 
   const txns = useMemo(() => [...rawTxns].sort((a, b) => (b.date || '').localeCompare(a.date || '')), [rawTxns]);
@@ -37,7 +33,7 @@ const Dashboard = ({ onAddEntry }) => {
     const map = new Map();
     filtered.forEach(t => getContributions(t).forEach(c => map.set(c.name, (map.get(c.name) || 0) + c.amount)));
     return Array.from(map.entries()).sort((a, b) => b[1] - a[1]).map(([name]) => name);
-  }, [filtered]);
+  }, [filtered, topupAllocation]);
 
   const monthlyDataFull = useMemo(() => {
     const data = MONTHS.map(m => { const row = { month: m }; usersInYear.forEach(u => { row[u] = 0; }); return row; });
@@ -46,7 +42,7 @@ const Dashboard = ({ onAddEntry }) => {
       getContributions(t).forEach(c => { data[idx][c.name] = (data[idx][c.name] || 0) + c.amount; });
     });
     return data;
-  }, [filtered, usersInYear]);
+  }, [filtered, usersInYear, topupAllocation]);
 
   // Trim months with no spend at all before the first entry and after the last one
   // (e.g. nothing happened yet in Jan–Mar, or hasn't happened yet in Nov–Dec) — but
@@ -70,7 +66,12 @@ const Dashboard = ({ onAddEntry }) => {
       map.set(key, prev);
     }));
     return Array.from(map.values()).sort((a, b) => b.total - a.total);
-  }, [filtered]);
+  }, [filtered, topupAllocation]);
+
+  // One row per top-up recipient, all years — balances aren't tied to the year filter.
+  const topupRows = useMemo(() => [...topups]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    .flatMap(tp => topupBalances(tp, topupAllocation.usedBy).map(b => ({ tp, ...b }))), [topups, topupAllocation]);
 
   const modeTotals = useMemo(() => {
     const map = new Map();
@@ -178,6 +179,40 @@ const Dashboard = ({ onAddEntry }) => {
             <tfoot><tr style={{ background: 'var(--cream-2)', fontWeight: 600 }}><td>Total</td><td>{userTotals.reduce((s, u) => s + u.count, 0)}</td><td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(yearTotal)}</td></tr></tfoot>
           </table>
         </div>
+      )}
+
+      {topupRows.length > 0 && (
+        <>
+          <div className="section-head" style={{ marginTop: 32 }}>
+            <div className="section-title-block">
+              <span className="section-eyebrow">Funding</span>
+              <h3 style={{ fontSize: '1.25rem' }}>Top-ups · all years</h3>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>Spending paid out of a top-up is counted under the person who gave it in the totals above.</div>
+          <div className="table-wrap">
+            <table className="txn-table">
+              <thead><tr><th>Date</th><th>From</th><th>To</th><th style={{ textAlign: 'right' }}>Given</th><th style={{ textAlign: 'right' }}>Used</th><th style={{ textAlign: 'right' }}>Remaining</th></tr></thead>
+              <tbody>
+                {topupRows.map(r => (
+                  <tr key={`${r.tp.id}:${r.uid}`}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.tp.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-')}</td>
+                    <td>{r.tp.fromName}</td>
+                    <td>{r.name}</td>
+                    <td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(r.amount)}</td>
+                    <td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(r.used)}</td>
+                    <td className="amount-cell" style={{ textAlign: 'right', color: r.remaining > 0 ? 'var(--green)' : 'var(--muted)' }}>₹{formatINR(r.remaining)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot><tr style={{ background: 'var(--cream-2)', fontWeight: 600 }}><td colSpan={3}>Total</td>
+                <td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(topups.reduce((s, tp) => s + topupTotal(tp), 0))}</td>
+                <td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(topupRows.reduce((s, r) => s + r.used, 0))}</td>
+                <td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(topupRows.reduce((s, r) => s + r.remaining, 0))}</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        </>
       )}
 
       {modeTotals.length > 0 && (

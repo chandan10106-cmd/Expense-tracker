@@ -105,5 +105,17 @@ service cloud.firestore {
       // evaluate on each returned document; the safest pattern is to require the client to query
       // with `.where('bucketId', '==', selectedBucketId)` so only documents from one bucket are returned.
     }
+
+    match /topups/{topupId} {
+      // Top-ups: money one bucket member gives others to spend on their behalf.
+      // Bucket members can see them (they drive the "Top-up" tags and Dashboard
+      // totals); only admins can create, edit or remove them. Queries must filter
+      // on `bucketId`, like transactions.
+      allow read: if isApproved() && (
+        isPrimaryAdmin() || (resource.data.bucketId != null && request.auth.uid in get(/databases/$(database)/documents/buckets/$(resource.data.bucketId)).data.members)
+      );
+      allow create: if isAdmin() && request.resource.data.bucketId != null;
+      allow update, delete: if isAdmin();
+    }
   }
 }
