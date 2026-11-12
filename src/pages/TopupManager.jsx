@@ -5,8 +5,10 @@ import { useAuth } from '../lib/AuthContext';
 import { useBucket } from '../lib/BucketContext';
 import { useTransactions } from '../lib/TransactionsContext';
 import { formatWithCommas, parseToNumber } from '../lib/numberUtils';
+import { processProofFiles, MAX_IMAGES_PER_TXN } from '../lib/fileUtils';
+import { ProofViewer } from './TransactionDetails';
 import { topupTotal, topupBalances } from '../lib/topups';
-import { Plus, Pencil, Trash2, X, Wallet } from 'lucide-react';
+import { Plus, Pencil, Trash2, X, Wallet, Upload, Paperclip } from 'lucide-react';
 
 const formatINR = (n) => new Intl.NumberFormat('en-IN').format(n || 0);
 const formatDate = (d) => { try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-'); } catch { return d; } };
@@ -21,7 +23,11 @@ const TopupModal = ({ existing, approvedUsers, onClose, onSave }) => {
       : [{ uid: '', amount: '' }]
   );
   const [note, setNote] = useState(existing?.note || '');
+  const [keptProofs, setKeptProofs] = useState(Array.isArray(existing?.proofs) ? existing.proofs : []);
+  const [newFiles, setNewFiles] = useState([]);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const proofCount = keptProofs.length + newFiles.length;
 
   // Users who aren't in this bucket any more can still appear on an older top-up.
   const userOptions = useMemo(() => {
@@ -38,7 +44,7 @@ const TopupModal = ({ existing, approvedUsers, onClose, onSave }) => {
   const setRow = (i, patch) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const total = rows.reduce((s, r) => s + (parseToNumber(r.amount) || 0), 0);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault(); setError('');
     if (!date) return setError('Date is required');
     if (!fromUid) return setError('Select who is giving the top-up');
@@ -49,6 +55,14 @@ const TopupModal = ({ existing, approvedUsers, onClose, onSave }) => {
     if (new Set(uids).size !== uids.length) return setError('Each recipient can only appear once');
     if (rows.some(r => !(parseToNumber(r.amount) > 0))) return setError('Every recipient needs an amount greater than zero');
 
+    let proofs = keptProofs;
+    if (newFiles.length > 0) {
+      setSaving(true);
+      try { proofs = [...keptProofs, ...(await processProofFiles(newFiles))]; }
+      catch (err) { setSaving(false); return setError(err.message || 'Could not read the proof files'); }
+      setSaving(false);
+    }
+
     const from = userById(fromUid);
     onSave({
       date,
@@ -57,7 +71,8 @@ const TopupModal = ({ existing, approvedUsers, onClose, onSave }) => {
         const u = userById(r.uid);
         return { uid: r.uid, name: u?.name || u?.email || 'Unknown', email: u?.email || null, amount: parseToNumber(r.amount) };
       }),
-      note: note.trim()
+      note: note.trim(),
+      proofs
     });
   };
 
@@ -106,10 +121,43 @@ const TopupModal = ({ existing, approvedUsers, onClose, onSave }) => {
               <label className="label">Note (optional)</label>
               <textarea className="textarea" value={note} onChange={e => setNote(e.target.value.slice(0, 300))} maxLength="300" placeholder="e.g. Sent via UPI for site expenses" />
             </div>
+
+            <div className="field">
+              <label className="label">Proof (optional · up to {MAX_IMAGES_PER_TXN} files)</label>
+              {proofCount > 0 && (
+                <div className="file-chip-list">
+                  {keptProofs.map((p, i) => (
+                    <div key={`k${i}`} className="file-chip">
+                      <span className="file-chip-name" title={p.name}>{p.name || `Proof ${i + 1}`}</span>
+                      {p.sizeKB ? <span className="file-chip-size">{p.sizeKB}KB</span> : null}
+                      <button type="button" onClick={() => setKeptProofs(prev => prev.filter((_, idx) => idx !== i))} className="file-chip-remove"><X size={12} /></button>
+                    </div>
+                  ))}
+                  {newFiles.map((f, i) => (
+                    <div key={`n${i}`} className="file-chip">
+                      <span className="file-chip-name" title={f.name}>{f.name}</span>
+                      <span className="file-chip-size">{(f.size / 1024).toFixed(0)}KB</span>
+                      <button type="button" onClick={() => setNewFiles(prev => prev.filter((_, idx) => idx !== i))} className="file-chip-remove"><X size={12} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {proofCount < MAX_IMAGES_PER_TXN && (
+                <label className="file-upload">
+                  <input type="file" accept="image/*,application/pdf" multiple onChange={e => {
+                    const incoming = Array.from(e.target.files || []);
+                    if (proofCount + incoming.length > MAX_IMAGES_PER_TXN) { setError(`Max ${MAX_IMAGES_PER_TXN} files.`); return; }
+                    setNewFiles(prev => [...prev, ...incoming]); e.target.value = '';
+                  }} />
+                  <Upload size={20} />
+                  <div className="file-upload-label">Click to upload</div>
+                </label>
+              )}
+            </div>
           </div>
           <div className="edit-form-footer">
             <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn btn-primary">{existing ? 'Save Changes' : 'Add Top-up'}</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Preparing files…' : existing ? 'Save Changes' : 'Add Top-up'}</button>
           </div>
         </form>
       </div>
@@ -123,6 +171,7 @@ const TopupManager = () => {
   const { activeBucket } = useBucket();
   const { approvedUsers, topups, topupAllocation, trackWrite, applyTopupAdd, applyTopupUpdate, applyTopupRemove } = useTransactions();
   const [editing, setEditing] = useState(null); // null | 'new' | topup
+  const [viewingProofs, setViewingProofs] = useState(null);
 
   const sorted = useMemo(() => [...topups].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || '')), [topups]);
 
@@ -192,6 +241,9 @@ const TopupManager = () => {
                     <td className="amount-cell" style={{ textAlign: 'right' }}>₹{formatINR(used)}</td>
                     <td className="amount-cell" style={{ textAlign: 'right', color: total - used > 0 ? 'var(--green)' : 'var(--muted)' }}>₹{formatINR(total - used)}</td>
                     <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      {tp.proofs?.length > 0 && (
+                        <><button className="btn-action btn-icon" onClick={() => setViewingProofs(tp)} title={`View ${tp.proofs.length} proof file${tp.proofs.length > 1 ? 's' : ''}`}><Paperclip size={11} /> {tp.proofs.length}</button>{' '}</>
+                      )}
                       <button className="btn-action btn-edit" onClick={() => setEditing(tp)} title="Edit top-up"><Pencil size={11} /> Edit</button>{' '}
                       <button className="btn-action btn-delete btn-icon-only" onClick={() => handleDelete(tp)} title="Remove top-up"><Trash2 size={12} /></button>
                     </td>
@@ -203,6 +255,7 @@ const TopupManager = () => {
         </div>
       )}
 
+      {viewingProofs && <ProofViewer txn={{ proofs: viewingProofs.proofs, amount: topupTotal(viewingProofs), date: viewingProofs.date }} onClose={() => setViewingProofs(null)} />}
       {editing && <TopupModal existing={editing === 'new' ? null : editing} approvedUsers={approvedUsers} onClose={() => setEditing(null)} onSave={handleSave} />}
     </div>
   );

@@ -209,7 +209,7 @@ const ZoomableImage = ({ src, alt }) => {
   );
 };
 
-const ProofViewer = ({ txn, onClose }) => {
+export const ProofViewer = ({ txn, onClose }) => {
   const proofs = getProofsArray(txn);
   const [idx, setIdx] = useState(0);
   if (!proofs.length) return null;
